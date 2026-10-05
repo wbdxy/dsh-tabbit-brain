@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# 凭证与本地配置 —— 绝不提交
+.env
+.env.*
+!.env.example
+*.env
+
+# 敏感备份（各类脚本会生成）
+*.bak
+*.bak-*
+*.upstream-bak
+*.bak-setup-*
+
+# diagnostic output
+trace.log
+*.log
+
+# scratch
+_probe*.mjs
+_schemacheck.mjs
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python 产物
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# 扫描器临时报告
+*-report.json
+gl-report.json
+gl-check.json

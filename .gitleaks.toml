@@ -1,0 +1,46 @@
+# .gitleaks.toml — gitleaks 配置
+#
+# 为什么需要这个文件：gitleaks 的默认规则会把「像凭证的东西」都报出来，包括
+# 文档里**故意写的**本地默认 key。直接无视告警会让这个闸门失去意义，所以正确
+# 做法是把已知安全的模式显式列进 allowlist —— 这样剩下的每一条都是真信号。
+#
+# 用法：
+#   gitleaks dir . --config .gitleaks.toml --redact
+#   gitleaks detect --config .gitleaks.toml --redact    # 带 git 历史
+
+title = "dsh-tabbit-brain"
+
+[extend]
+# 继承官方默认规则集，只在其上叠加 allowlist
+useDefault = true
+
+[allowlist]
+description = "项目内已知安全的内容"
+
+# ── 路径豁免 ────────────────────────────────────────────────────────────────
+paths = [
+  # 第三方网关的覆盖文件：不是我们的代码，且里面不含凭证
+  '''gateway-patch/files/''',
+  # 锁文件与构建产物
+  '''node_modules/''',
+  '''pnpm-lock\.yaml''',
+  '''package-lock\.json''',
+]
+
+# ── 内容豁免 ────────────────────────────────────────────────────────────────
+regexes = [
+  # 本项目规定的**本地默认** API key。它是假的、写死在文档里的示例值，
+  # 真实部署时用户会换成自己的。文档不写它反而会让新用户跑不起来。
+  '''sk-tabbit-local''',
+
+  # 文档里那些显然不是真凭证的占位符
+  '''Bearer\s+<[^>]+>''',                    # Bearer <your-key> / <你的key>
+  '''Bearer\s+\$\{[^}]+\}''',                # Bearer ${API_KEY}
+  '''Bearer\s+REDACTED''',
+
+  # 生成 .env 的模板字符串（不是真值）
+  '''API_KEY=\$\{[^}]+\}''',
+
+  # 从环境变量读取（正确做法，不是硬编码）
+  '''process\.env\.[A-Z_]+''',
+]
