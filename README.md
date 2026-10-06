@@ -198,6 +198,7 @@ delegation with no plugin reload.
 | `gatewayStartCommand` | *(empty)* | Shell command that starts the gateway. Empty disables auto-start. |
 | `gatewayStartCwd` | *(empty)* | Working directory for that command. |
 | `gatewayStartTimeoutMs` | `20000` | How long to wait for health after starting. |
+| `delegationStyle` | `standard` | How the shipped guidance instructs the agent: `off`, `standard` (decompose first, parallelise the reasoning half), or `aggressive` (delegate more readily). |
 | `diagnostics` | `false` | Write a diagnostic log. |
 | `diagnosticsPath` | *(plugin dir)/trace.log* | Where that log goes. |
 
@@ -298,11 +299,31 @@ A note on how the guidance reaches your agent — because "copy this into your
 `AGENTS.md`" does not scale to other people's installs.
 
 **The behavioural guidance ships inside the plugin.** It registers a system
-prompt section (`plugin:tabbit-brain-guidance`) that tells the agent how to
-position the delegated model — peer in reasoning, no hands, no memory, and
-crucially that a reply is a *claim* to be checked rather than a fact. Every
-session of every install gets it automatically. You do not write anything into
-`AGENTS.md`, and nothing breaks if you never touch that file.
+prompt section (`plugin:tabbit-brain-guidance`) that does two things:
+
+1. **Teaches the agent to decompose before starting.** Split the request, sort each
+   part by whether it needs hands, then start the reasoning half in the background
+   *while* doing the hands half yourself. This is a workflow, not a description —
+   see the note below on why that distinction is the whole point.
+2. **Positions the delegated model accurately** — peer in reasoning, no hands, no
+   memory, and crucially that a reply is a *claim* to be checked rather than a fact.
+
+It ships with six guardrails, because guidance that only says "delegate more"
+produces more waste than it saves: an independence test, never delegate
+verification, a minimum useful size, output is a draft you own, don't parallelise
+work that can conflict, and the workspace boundary.
+
+Set `delegationStyle` to change it: `off`, `standard` (default), or `aggressive`.
+
+> **Why a workflow rather than a description.** The first version of this section
+> only described the model. Measured over hours of real work, that produced nine
+> delegations — all nine availability probes, none of them actual work. The
+> capability was present and unused. A description is permission; it does not
+> create the impulse. So the section now instructs, and the instruction is
+> verified rather than assumed.
+
+Every session of every install gets it automatically. You do not write anything
+into `AGENTS.md`, and nothing breaks if you never touch that file.
 
 **Your `AGENTS.md` stays yours.** Use it for what is specific to your machine:
 paths, ports, which models you standardised on, local quirks. That is the split

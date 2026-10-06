@@ -6,6 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-06
+
+### Changed
+
+- **The shipped guidance now prescribes a workflow, not just a description.**
+
+  The old text explained what the Tabbit model is — no tools, no memory, a claim
+  rather than a fact — and left the decision to use it entirely to the moment. The
+  measured result, over hours of substantive work, was nine delegations and all
+  nine were "reply with two characters" availability probes. The capability was
+  present and unused, and a description cannot fix that: it is permission, not a
+  trigger.
+
+  It now opens with an instruction: **decompose before starting non-trivial work.**
+  Then a three-step protocol — split, sort by whether a part needs hands, and start
+  the reasoning half in the background *while* doing the hands half. The point that
+  was missing is the third: the built-in `tool:subagent_tabbit` section already
+  explains the mechanics of background delegation, but nothing said to reach for it
+  at the moment a task arrives.
+
+  Six guardrails ship alongside it, because guidance that only says "delegate more"
+  produces more waste than it saves: an independence test (needing the result to
+  decide your next step is fake parallelism), never delegating verification, a
+  minimum useful size (if briefing costs more than doing, do it yourself), output is
+  a draft you own, do not parallelise work that can conflict, and the workspace
+  boundary.
+
+- New `delegationStyle` setting: `off` / `standard` (default) / `aggressive`.
+  Delegation costs a round trip plus a written brief, and tolerance for that differs
+  between users, so it is not ours to decide unilaterally.
+
+### Note
+
+The baseline and the verification are part of this change, not an afterthought: four
+earlier changes in this project drifted precisely because they were made without
+checking that the thing they described still matched. For this one the baseline is
+recorded above, and the post-change behaviour is verified against the same composite
+task plus two negative cases (pure hands work, and pure verification) that must
+*not* trigger delegation.
+
 ## [0.10.2] - 2026-10-06
 
 ### Fixed
@@ -433,7 +473,8 @@ The provider was built to fix a measured problem. On the same delegation task:
 | child session size | — | 51 KB vs 5.1 MB parent |
 | model outcome | "there is no task in this message" | complete, correct deliverable |
 
-[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.11.0
 [0.10.2]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.2
 [0.10.1]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.1
 [0.10.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.0
