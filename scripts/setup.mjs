@@ -21,7 +21,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readd
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
+import { parseDocument, stringify } from 'yaml';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DSH_HOME = process.env.DSH_HOME || join(homedir(), '.dsh');
@@ -99,6 +99,9 @@ function parseArgs(argv) {
     const key = norm(a);
     if (!(key in out)) { console.error(`未知参数: ${a}（用 --help 看可用参数）`); process.exit(2); }
     const spec = SPEC[a];
+    if (spec.arg && (!argv[i + 1] || argv[i + 1].startsWith('--'))) {
+      console.error('Missing value for ' + a); process.exit(2);
+    }
     out[key] = spec.arg ? argv[++i] : true;
   }
   return out;
@@ -162,14 +165,6 @@ function write(p, content) {
   writeFileSync(p, content, 'utf8');
 }
 
-async function ask(question, fallback) {
-  if (args.yes) return fallback;
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const a = await new Promise((res) => rl.question(`${question}${fallback ? ` [${fallback}]` : ''}: `, res));
-  rl.close();
-  return a.trim() || fallback;
-}
-
 // ─── 步骤 ────────────────────────────────────────────────────────────────────
 
 function checkEnv(a) {
@@ -228,121 +223,89 @@ description: 子代理挂载的极简预设：persona complete:true，不挂任�
   ok(`已写入 ${dir}`);
 }
 
-function registerProvider(a) {
-  step(3, `在 settings.yaml 注册 provider "${a.provider}"`);
-  log('    作用: 让 DSH 知道可以通过本地网关调用哪些模型。');
-
-  const settings = join(DSH_HOME, 'settings.yaml');
-  const existing = existsSync(settings) ? readFileSync(settings, 'utf8') : '';
-
-  if (existing.includes(`${a.provider}:`) && !a.force) {
-    skip('settings.yaml 里已有该 provider，跳过（要覆盖加 --force）');
-    return;
-  }
-
-  const models = (a.models || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (models.length === 0) {
-    warn('未提供 --models，无法注册模型。');
-    warn('  跑这条命令拿到你账号实际可用的 id:');
-    warn(`  curl ${a.base_url}/models -H "Authorization: Bearer ${a.api_key}"`);
-    warn('  然后重跑并加 --models <id1,id2>');
-    return;
-  }
-
-  const block = `
-  ${a.provider}:
-    displayName: Tabbit 本地网关
-    apiKeyEnv: TABBIT_API_KEY
-    baseURL: ${a.base_url}
-    models:
-${models.map((m) => `      - id: ${m}\n        inputModalities: [text, image]`).join('\n')}
-`;
-  log(`    将注册 ${models.length} 个模型: ${models.join(', ')}`);
-  log('    ⚠ 模型 id 必须是你账号实际有的，否则会被跳过。');
-
-  if (!a.write_settings) {
-    warn('未加 --write-settings，只打印不写入。把下面这段加进 settings.yaml 的 llm-pi-ai.providers 下：');
-    log(block);
-    return;
-  }
-
-  if (!existing.includes('llm-pi-ai:')) {
-    write(settings, existing + `\nllm-pi-ai:\n  providers:\n${block}`);
-    ok('已新建 llm-pi-ai.providers 并写入');
-    return;
-  }
-  // 已有 llm-pi-ai：在其 providers 下追加（按缩进定位插入点）
-  const lines = existing.split('\n');
-  const start = lines.findIndex((l) => /^llm-pi-ai:/.test(l));
-  let insertAt = start + 1;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^[^\s#]/.test(lines[i])) break;      // 下一个顶层键
-    insertAt = i + 1;
-  }
-  lines.splice(insertAt, 0, `  providers:`.match(/  providers:/) && !existing.includes('providers:') ? '' : '', block.trimEnd());
-  write(settings, lines.filter((l) => l !== '').join('\n') + '\n');
-  ok('已在 llm-pi-ai 下追加 provider');
-  warn('如果 settings.yaml 里已有 providers: 段，请人工确认缩进是否正确。');
+function loadYaml(file, fallback, kind) {
+  const document = parseDocument(existsSync(file) ? readFileSync(file, 'utf8') : fallback);
+  if (document.errors.length) throw new Error(kind + ': ' + document.errors[0].message);
+  return document;
 }
 
-function mountTool(a, preset) {
-  step(4, `在主预设 "${preset}" 里挂载委派工具`);
-  log('    作用: 让主对话多出一个 subagent_tabbit 工具，可以把推理任务外包。');
+function requireMap(value, label) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(label + ' must be a YAML mapping');
+  }
+}
 
-  if (!preset) {
-    warn('无法确定要挂到哪个预设。');
-    warn('  用 --mount-preset <name> 指定（你主对话用的那个预设，如 router-standard）');
-    warn('  然后在它的 delegation 组里加这一行：');
-    log(`
-- id: tool-subagent-tabbit
-  name: '@deepseek-ai/dsh-tool-subagent'
-  config:
-    provider: ${a.provider}
-    toolName: subagent_tabbit
-    backgroundMode: continuable
-    # 不要写 persona      —— 提示词由子代理挂载的预设决定
-    # 不要写 agentOptions —— 会覆盖插件设置里的模型选择
-`);
+function preflight(a) {
+  const settings = join(DSH_HOME, 'settings.yaml');
+  const document = loadYaml(settings, '{}\n', 'settings.yaml');
+  const data = document.toJS() || {};
+  requireMap(data, 'settings');
+  if (data['llm-pi-ai'] !== undefined) {
+    requireMap(data['llm-pi-ai'], 'llm-pi-ai');
+    if (data['llm-pi-ai'].providers != null) requireMap(data['llm-pi-ai'].providers, 'providers');
+  }
+  const target = a.mount_preset || data['agent-presets']?.default;
+  if (!target) throw new Error('Specify --mount-preset or agent-presets.default');
+  const presetFile = join(DSH_HOME, '.agent-presets', target, 'agent.cordis.yml');
+  if (!existsSync(presetFile)) throw new Error('Main preset not found: ' + target);
+  const presetDocument = loadYaml(presetFile, '[]\n', 'main preset');
+  if (!Array.isArray(presetDocument.toJS())) throw new Error('Main preset must be a YAML sequence');
+  return { document, data, target, presetFile, presetDocument };
+}
+
+function registerProvider(a, prepared) {
+  step(3, `在 settings.yaml 注册 provider "${a.provider}"`);
+  if (!(a.models || '').trim()) throw new Error('Specify --models with ids returned by /v1/models');
+  const data = prepared.data;
+  data['llm-pi-ai'] ||= {};
+  data['llm-pi-ai'].providers ||= {};
+  if (data['llm-pi-ai'].providers[a.provider] && !a.force) {
+    skip('Provider already exists; preserved');
     return;
   }
+  data['llm-pi-ai'].providers[a.provider] = {
+    displayName: 'Tabbit local gateway', apiKeyEnv: 'TABBIT_API_KEY', baseURL: a.base_url,
+    models: a.models.split(',').map(id => ({ id: id.trim(), inputModalities: ['text', 'image'] })),
+  };
+  if (a.write_settings) write(join(DSH_HOME, 'settings.yaml'), stringify(data));
+  else warn('Settings not written; use --write-settings to enable this step');
+}
 
-  const file = join(DSH_HOME, '.agent-presets', preset, 'agent.cordis.yml');
-  if (!existsSync(file)) {
-    err(`预设文件不存在: ${file}`);
+function mountTool(a, prepared) {
+  step(4, 'Mount delegation tool in ' + prepared.target);
+  const document = prepared.presetDocument;
+  const rows = document.toJS();
+  if (rows.some(row => row?.id === 'tool-subagent-tabbit')) {
+    skip('Tool already mounted; preserved');
     return;
   }
-  const text = readFileSync(file, 'utf8');
-  if (text.includes('tool-subagent-tabbit')) {
-    skip('该预设里已挂载，跳过');
-    return;
-  }
-
-  const block = `
-- id: tool-subagent-tabbit
-  name: '@deepseek-ai/dsh-tool-subagent'
-  config:
-    provider: ${a.provider}
-    toolName: subagent_tabbit
-    backgroundMode: continuable
-`;
-  write(file, text.trimEnd() + '\n' + block);
-  ok(`已追加到 ${file}`);
-  warn('请打开该文件确认这条被放进了 delegation 分组（缩进/分组正确）。');
+  document.add({ id: 'tool-subagent-tabbit', name: '@deepseek-ai/dsh-tool-subagent',
+    config: { provider: 'tabbit', toolName: 'subagent_tabbit', backgroundMode: 'continuable' } });
+  write(prepared.presetFile, document.toString());
 }
 
 // ─── 主流程 ──────────────────────────────────────────────────────────────────
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) { help(); process.exit(0); }
-DRY = Boolean(args['dry-run']);
+DRY = Boolean(args.dry_run);
 
 log(`\n  dsh-tabbit-brain 安装助手${DRY ? '  [DRY-RUN，不会写任何文件]' : ''}`);
 
+// Validate every input before the first write.
+let prepared;
+try {
+  if (!args.models.trim()) throw new Error('Specify --models');
+  for (const value of [args.preset_id, args.mount_preset, args.provider].filter(Boolean)) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('Invalid identifier: ' + value);
+  }
+  prepared = preflight(args);
+} catch (e) { console.error('Setup stopped: ' + e.message); process.exit(1); }
 const gatewayUp = await checkEnv(args);
 
 step('0', '你要自己填的值');
 log(`    profile      : ${args.profile}          (--profile)`);
-log(`    api-key      : ${args.api_key}          (--api-key，须与网关 .env 一致)`);
+log('    api-key      : [redacted] (--api-key)');
 log(`    base-url     : ${args.base_url}         (--base-url)`);
 log(`    models       : ${args.models || '(未提供，将要从网关读取)'}   (--models)`);
 log(`    mount-preset : ${args.mount_preset || '(未指定)'}   (--mount-preset)`);
@@ -352,22 +315,13 @@ if (!gatewayUp) {
 }
 
 writePreset(args);
-registerProvider(args);
+registerProvider(args, prepared);
 
-// mount-preset 缺省时尝试读 settings.yaml 的 agent-presets.default
-let mountTo = args.mount_preset;
-if (!mountTo) {
-  const s = join(DSH_HOME, 'settings.yaml');
-  if (existsSync(s)) {
-    const m = readFileSync(s, 'utf8').match(/^\s*default:\s*(\S+)/m);
-    if (m) { mountTo = m[1]; log(`\n    （从 settings.yaml 推断主预设为 "${mountTo}"）`); }
-  }
-}
-mountTool(args, mountTo);
+mountTool(args, prepared);
 
 step(5, '还需要你手动做的事');
 log('    1. 设置 API key 环境变量：');
-log(`       [Environment]::SetEnvironmentVariable('TABBIT_API_KEY', '${args.api_key}', 'User')`);
+log("       [Environment]::SetEnvironmentVariable('TABBIT_API_KEY', '<YOUR_KEY>', 'User')");
 log('    2. 启动网关（如果还没跑）：');
 log('       cd <你的 tabbit-toy 目录> && node src/server.mjs');
 log('    3. **重启 DSH** —— 插件源码/预设改动只有重启才生效。');

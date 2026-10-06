@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-06
+
+### Fixed
+
+- **Setup assistant configuration writes.** The first implementation used text
+  insertion for YAML and had three concrete failures: `--dry-run` still wrote
+  files, a new `llm-pi-ai` block could place the provider at the wrong level, and
+  damaged YAML was not rejected before later writes. It now uses the `yaml`
+  parser, validates the whole configuration before writing, writes the provider
+  at `llm-pi-ai.providers.<id>`, preserves existing providers, and remains
+  idempotent.
+
+- Added isolated regression tests in `tools/test-setup.py` covering dry-run
+  non-mutation, missing/empty/existing provider mappings, idempotence, and
+  malformed configuration preservation. The suite passes: 3 tests, 0 failures.
+
+- Verified the browser-running-without-CDP failure path again: the gateway
+  returns immediately, reuses the old cookie, and leaves the user's visible
+  browser window alive.
+
 ## [0.11.0] - 2026-10-06
 
 ### Changed
@@ -473,7 +493,8 @@ The provider was built to fix a measured problem. On the same delegation task:
 | child session size | — | 51 KB vs 5.1 MB parent |
 | model outcome | "there is no task in this message" | complete, correct deliverable |
 
-[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.11.1
 [0.11.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.11.0
 [0.10.2]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.2
 [0.10.1]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.1
