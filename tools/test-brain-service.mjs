@@ -29,5 +29,14 @@ try {
  await assert.rejects(call('A','x'.repeat(3000)),/budget/);
  const ctrl=new AbortController();ctrl.abort();await assert.rejects(call('A','cancel',{signal:ctrl.signal}));
  service.reset('A','design');await call('A','reset');assert.equal(requests.at(-1).messages.length,2);
- console.log('PASS: direct HTTP, no tools, owner isolation, history, queue, failure rollback, budget, abort, reset');
+ const task=service.createJob('A','durable-job','job prompt',opts);
+ assert.equal(service.status('A',task.id).status,'queued');
+ assert.equal(service.status('B',task.id),null,'job owner isolation');
+ await service.runJob('A',task.id,opts);
+ assert.equal(service.status('A',task.id).status,'completed');
+ assert.equal(JSON.parse(service.status('A',task.id).resultJson).content,'answer');
+ const failed=service.createJob('A','durable-failure','FAIL',opts);
+ await assert.rejects(service.runJob('A',failed.id,opts),/HTTP 401/);
+ assert.equal(service.status('A',failed.id).status,'failed');
+ console.log('PASS HTTP and durable jobs');
 } finally {service.dispose();server.closeAllConnections();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});}

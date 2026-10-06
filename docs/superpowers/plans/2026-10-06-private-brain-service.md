@@ -187,7 +187,7 @@ git add lib/brain-service.js tools/test-brain-service.mjs
 **Files:**
 - Modify: `lib/brain-tool.js`
 - Modify: `lib/index.js`
-- Delete: `lib/global-tool.js` if no longer referenced
+- Completed removal: legacy global-tool module (the Brain tool adapter owns installation).
 - Test: `tools/test-brain-tools.mjs`
 
 **Interfaces:**
@@ -347,14 +347,18 @@ Set `run_in_background: true`, record the job id, continue independent main-agen
 
 Use owner A conversation `design` for two calls and confirm the second sees the first. Use owner A `debug` and owner B `design` and confirm neither sees the other. Archive, list, read, reset, and delete each with evidence.
 
-- [ ] **Step 6: Test remote-session boundary explicitly**
+- [ ] **Step 6: Fix and test deterministic message ordering**
 
-Record the gateway's remote Tabbit session id for two local conversations. If both local conversations reuse one remote id, report that remote context isolation is not achieved; do not claim otherwise. If the gateway cannot create/select remote sessions, record that as a known limitation and keep local isolation guarantees separate.
+The first host test exposed assistant-before-user ordering after restart. Messages must use a monotonic insertion sequence or an explicit integer position; do not order by millisecond timestamps plus random UUID. Add a migration-safe `seq` column or an equivalent per-conversation ordering key, order reads by that key, and test same-timestamp user/assistant pairs, pagination, restart, and concurrent conversations.
 
-- [ ] **Step 7: Test restart persistence**
+- [ ] **Step 7: Test remote-session boundary explicitly**
+
+The gateway currently selects `sessions[0]` and caches it globally. Record the remote Tabbit session id for two local conversations. If both local conversations reuse one remote id, report that remote context isolation is not achieved; do not claim local SQLite isolation provides it. Decide whether the first release documents the limitation or adds a gateway API for creating/selecting a remote session before proceeding.
+
+- [ ] **Step 8: Test restart persistence**
 
 Create one conversation, restart the Brain service/DSH, list it, read its messages, and confirm status/title survive. Do not claim remote history persistence unless the gateway evidence confirms it.
 
-- [ ] **Step 8: Review evidence and only then mark complete**
+- [ ] **Step 9: Review evidence and only then mark complete**
 
 Required evidence: tool visibility, foreground receipt, background job result, no child session, gateway request/model evidence, history isolation, restart persistence, and explicit remote-session result.

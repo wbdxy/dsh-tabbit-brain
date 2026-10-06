@@ -12,13 +12,15 @@ try {
   const b = store.createConversation('owner-b', 'Design', 'MODEL_A');
   assert.notEqual(a.id, b.id);
   store.appendMessages(a.id, [
-    { id: 'm1', role: 'user', content: 'hello', requestId: 'r1', model: 'MODEL_A' },
-    { id: 'm2', role: 'assistant', content: 'world', requestId: 'r1', model: 'MODEL_A' },
+    { id: 'z-user', role: 'user', content: 'hello', requestId: 'r1', model: 'MODEL_A', createdAt: 1000 },
+    { id: 'a-assistant', role: 'assistant', content: 'world', requestId: 'r1', model: 'MODEL_A', createdAt: 1000 },
   ]);
   assert.equal(store.listConversations('owner-a', false).length, 1);
   assert.equal(store.listConversations('owner-b', false).length, 1);
   assert.equal(store.getConversation('owner-b', a.id), null, 'owner isolation');
-  assert.equal(store.listMessages('owner-a', a.id, 10, null).length, 2);
+  const ordered = store.listMessages('owner-a', a.id, 10, null);
+  assert.deepEqual(ordered.map(x => x.role), ['user', 'assistant']);
+  assert.equal(store.listMessages('owner-a', a.id, 1, null)[0].role, 'assistant');
   store.setStatus('owner-a', a.id, 'archived');
   assert.equal(store.listConversations('owner-a', false).length, 0);
   assert.equal(store.listConversations('owner-a', true).length, 1);
