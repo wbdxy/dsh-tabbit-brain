@@ -77,46 +77,93 @@ node --version    # 需要 v22.19+ 或 v24+
 
 ---
 
-## 步骤 1：部署网关 ⚠️ 目前最麻烦的一步
+## 步骤 1：部署网关
 
-**先说清楚**：网关**不是**本插件的一部分，它是 `goehou/tabbit-toy` 的一个分支。
-本插件只负责"保证网关在跑"，不负责提供网关。
+**先说清楚归谁**：网关**不是**本插件的一部分，它是 `goehou/tabbit-toy` 的一个分支。
+本插件只负责"保证网关在跑"。
 
-这确实是当前最大的摩擦点，我们打算把它单独发布成一个仓库（见文末「已知的粗糙处」）。
+### 为什么是"安装器"而不是"独立仓库"
+
+我们**没有**把网关单独发一个仓库。**这是刻意的**，原因是许可证：
+
+```
+goehou/tabbit-toy  →  GitHub API 返回 "Not Found"（无 LICENSE 文件）
+```
+
+**未声明许可 = 默认保留所有权利。** 发布一份它的完整副本法律上站不住。
+
+所以我们的做法是：**装的时候在你机器上从官方仓库取，再覆盖我们改动的文件。**
+我们只分发自己写的那部分。
+
+顺带的好处：**上游更新能自然流入**——重跑脚本就拿到上游最新代码 + 我们的改动。
+
+### 一条命令（推荐）
+
+```bash
+node gateway-patch/install.mjs --dry-run     # 先看会做什么，不写任何文件
+node gateway-patch/install.mjs               # 真正执行
+```
+
+**必须你自己填的（★）**：
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| ★ `--api-key <key>` | 网关鉴权 key。**DSH 那侧的 `TABBIT_API_KEY` 必须与它一致** | `sk-tabbit-local` |
+| ★ `--base-url <url>` | **国内版 `https://web.tabbit.com`，国际版 `https://web.tabbit.ai`** | 国内版 |
+
+其余参数（`--dir` / `--port` / `--repo` / `--ref`）都有合理默认值，一般不用管。
+`node gateway-patch/install.mjs --help` 有完整列表。
+
+它做四件事：clone 上游 → 覆盖我们的 4 个改动文件 → 写 `.env` → 提示下一步。
+全程幂等：已存在的目录会先备份（`*.upstream-bak`），不会盲目覆盖。
+
+### 它覆盖了哪 4 个文件
+
+| 文件 | 性质 | 作用 |
+|---|---|---|
+| `scripts/lib/detect.mjs` | **原创新增** | 浏览器位置/profile 自动探测 |
+| `scripts/lib/cdp.mjs` | 修改 | 短命 headless 取 cookie |
+| `src/config.mjs` | 修改 | 路径走自动探测 |
+| `src/server.mjs` | 修改 | cookie 刷新两段式 |
+
+为什么改这些、以及背后的实测数据，见 [`gateway-patch/README.md`](gateway-patch/README.md)。
+
+### 手工方式（想自己控制时）
 
 ```powershell
-# 1. 取网关源码
+# 1. 取源码
 git clone https://github.com/goehou/tabbit-toy
 cd tabbit-toy
 npm install
+
+# 2. 把本项目 gateway-patch/files/ 下的 4 个文件复制进去
+#    （目录结构一一对应）
+
+# 3. 写 .env
 ```
 
 ```ini
-# 2. 写 .env（放在 tabbit-toy/ 下）
 TABBIT_BASE_URL=https://web.tabbit.com     # 国际版改成 https://web.tabbit.ai
 PORT=8787
 API_KEY=sk-tabbit-local                    # 自己定，后面两处要一致
 CDP_PORT=9222
 COOKIE_REFRESH_MINUTES=360
 
-# 自动取 cookie（短命 headless 实例）
 TABBIT_AUTO_LAUNCH_BROWSER=1
 # 下面两项留空即可 —— 会自动探测
 # TABBIT_EXE=
 # TABBIT_USER_DATA_DIR=
 ```
 
-**3. 应用补丁**（`cdp.mjs` 的短命 headless + `detect.mjs` 的自动探测 +
-`server.mjs` 的刷新逻辑）。补丁随本项目发布，见仓库的 `gateway-patch/` 目录。
-
-**4. 验证网关能自己拿到 cookie**：
+### 验证
 
 ```powershell
-cd tabbit-toy
+cd <网关目录>
+npm install          # 如果安装器提示缺依赖
 node src/server.mjs
 ```
 
-看日志里是否有：
+看到这段就成功了：
 
 ```
 [server] cookie 自动刷新失败: fetch failed；改用短命 headless 实例取 cookie…
@@ -125,7 +172,7 @@ node src/server.mjs
 [server] cookie 已自动刷新 (5 个, 长度 1370) [ephemeral]
 ```
 
-**看到 `[ephemeral]` 就说明成功了**——它无窗口地起了一个浏览器实例、拿到 cookie、立刻杀掉。
+**`[ephemeral]` = 它无窗口地起了一个浏览器实例、拿到 cookie、立刻杀掉。**
 
 > 如果日志说 `cookie 里没有 token` —— 说明你的 Tabbit 没登录。回到前置条件第 1 步。
 
@@ -300,7 +347,11 @@ macOS / Linux 需要移植这两处，目前**不可用**。
 
 ## 已知的粗糙处
 
-**步骤 1（网关）是最不舒服的一步**——让用户克隆第三方项目再手工打补丁，对开源分发
-来说不合格。我们打算把网关单独发布成一个仓库（含补丁），让这一步变成一条 clone 命令。
+**步骤 1 已经不再需要手工打补丁**——`gateway-patch/install.mjs` 一条命令搞定
+（clone + 覆盖 + 写配置）。
 
-在那之前，如果你在步骤 1 卡住，请提 issue 说明卡在哪。
+**但有个我们解决不了的限制**：上游 `goehou/tabbit-toy` **没有 LICENSE 文件**，
+所以网关没法作为独立仓库发布（见步骤 1 的说明）。这意味着我们永远依赖上游仓库
+可访问。如果它消失或被设为私有，本项目的步骤 1 就会失效。
+
+如果你在步骤 1 卡住，请提 issue 说明卡在哪。

@@ -86,49 +86,97 @@ Installed and starting normally.
 
 ---
 
-## Step 1: deploy the gateway ⚠️ currently the awkward step
+## Step 1: deploy the gateway
 
-**Be clear about this**: the gateway is **not** part of this plugin. It is a fork
-of `goehou/tabbit-toy`. This plugin keeps the gateway *running*; it does not
-provide one.
+**Whose code is this**: the gateway is **not** part of this plugin. It is a fork of
+`goehou/tabbit-toy`. This plugin only keeps a gateway *running*.
 
-That is genuinely the roughest part of the setup, and we intend to publish the
-gateway as its own repo (see "Known rough edges" below).
+### Why an installer instead of a separate repo
+
+We did **not** publish the gateway as its own repository. That is deliberate, and
+the reason is licensing:
+
+```
+goehou/tabbit-toy  ->  GitHub API returns "Not Found" (no LICENSE file)
+```
+
+**No declared licence means all rights reserved by default**, so redistributing a
+copy of it does not hold up.
+
+So instead: the installer fetches it from the official repo **on your machine** and
+overlays the files we changed. We ship only our own part.
+
+A side benefit: **upstream fixes flow in naturally** — re-run the script and you
+get their latest code plus our changes.
+
+### One command (recommended)
+
+```bash
+node gateway-patch/install.mjs --dry-run     # show what it would do, write nothing
+node gateway-patch/install.mjs               # do it
+```
+
+**Only you can supply these (★)**:
+
+| Option | Notes | Default |
+|---|---|---|
+| ★ `--api-key <key>` | gateway auth key; **`TABBIT_API_KEY` on the DSH side must match** | `sk-tabbit-local` |
+| ★ `--base-url <url>` | **domestic `https://web.tabbit.com`, international `https://web.tabbit.ai`** | domestic |
+
+The rest (`--dir` / `--port` / `--repo` / `--ref`) have sensible defaults.
+`node gateway-patch/install.mjs --help` lists everything.
+
+It does four things: clone upstream, overlay our four changed files, write `.env`,
+and tell you what is next. It is idempotent — an existing directory is backed up as
+`*.upstream-bak` rather than blindly overwritten.
+
+### The four files it overlays
+
+| File | Kind | Purpose |
+|---|---|---|
+| `scripts/lib/detect.mjs` | **new** | browser/profile auto-detection |
+| `scripts/lib/cdp.mjs` | modified | short-lived headless cookie read |
+| `src/config.mjs` | modified | paths go through detection |
+| `src/server.mjs` | modified | two-stage cookie refresh |
+
+Why these changed, and the measurements behind them: [`gateway-patch/README.md`](gateway-patch/README.md).
+
+### By hand (if you want control)
 
 ```powershell
-# 1. get the gateway
+# 1. get the source
 git clone https://github.com/goehou/tabbit-toy
 cd tabbit-toy
 npm install
+
+# 2. copy the four files from this project's gateway-patch/files/ into it
+#    (the directory layout matches)
+
+# 3. write .env
 ```
 
 ```ini
-# 2. write .env (inside tabbit-toy/)
-TABBIT_BASE_URL=https://web.tabbit.com     # use https://web.tabbit.ai internationally
+TABBIT_BASE_URL=https://web.tabbit.com     # international: https://web.tabbit.ai
 PORT=8787
-API_KEY=sk-tabbit-local                    # your choice — keep it consistent below
+API_KEY=sk-tabbit-local                    # your choice - keep it consistent below
 CDP_PORT=9222
 COOKIE_REFRESH_MINUTES=360
 
-# automatic cookie acquisition (short-lived headless instance)
 TABBIT_AUTO_LAUNCH_BROWSER=1
-# leave these empty — they are auto-detected
+# leave these empty - they are auto-detected
 # TABBIT_EXE=
 # TABBIT_USER_DATA_DIR=
 ```
 
-**3. Apply the patches** (short-lived headless in `cdp.mjs`, auto-detection in
-`detect.mjs`, the refresh logic in `server.mjs`). The patches ship with this
-project, under `gateway-patch/`.
-
-**4. Verify the gateway can get its own cookies**:
+### Verify
 
 ```powershell
-cd tabbit-toy
+cd <gateway-dir>
+npm install          # if the installer said dependencies were missing
 node src/server.mjs
 ```
 
-Look for this in the log:
+Seeing this means it worked:
 
 ```
 [server] cookie 自动刷新失败: fetch failed；改用短命 headless 实例取 cookie…
@@ -137,10 +185,10 @@ Look for this in the log:
 [server] cookie 已自动刷新 (5 个, 长度 1370) [ephemeral]
 ```
 
-**Seeing `[ephemeral]` means it worked** — a windowless browser came up, the
-cookies were read, and it was killed immediately.
+**`[ephemeral]` means a windowless browser came up, the cookies were read, and it
+was killed immediately.**
 
-> If the log says `cookie 里没有 token`, your Tabbit is not signed in. Go back to
+> If the log says `cookie 里没有 token`, your Tabbit is not signed in. Back to
 > prerequisite 1.
 
 ---
@@ -318,9 +366,12 @@ macOS / Linux need those two ported; **they do not work today**.
 
 ## Known rough edges
 
-**Step 1 (the gateway) is the uncomfortable one** — asking users to clone a
-third-party project and hand-apply patches is not good enough for an open-source
-distribution. The plan is to publish the gateway as its own repo (patches
-included), reducing that step to a single clone.
+**Step 1 no longer means hand-applying patches** — `gateway-patch/install.mjs`
+does it in one command (clone + overlay + write config).
 
-Until then, if you get stuck at step 1, open an issue saying where.
+**But there is a limit we cannot fix**: upstream `goehou/tabbit-toy` ships **no
+LICENSE file**, so the gateway cannot be published as its own repo (see step 1).
+That leaves this project depending on the upstream repository staying reachable. If
+it disappears or goes private, step 1 stops working.
+
+If you get stuck at step 1, open an issue saying where.

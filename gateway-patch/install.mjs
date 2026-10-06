@@ -27,9 +27,9 @@ const SPEC = {
   '--dir': { arg: '<path>', desc: '网关安装目录。', default: join(homedir(), '.tabbit-gateway', 'tabbit-toy') },
   '--repo': { arg: '<url>', desc: '上游仓库地址（想用镜像时改这里）。', default: UPSTREAM },
   '--ref': { arg: '<branch>', desc: '上游分支/tag。', default: '' },
-  '--api-key': { arg: '<key>', desc: '★ 网关的 API key。自己定，后面 DSH 那侧要一致。', default: 'sk-tabbit-local' },
+  '--api-key': { arg: '<key>', star: true, desc: '网关的 API key。自己定，后面 DSH 那侧要一致。', default: 'sk-tabbit-local' },
   '--port': { arg: '<n>', desc: '网关监听端口。', default: '8787' },
-  '--base-url': { arg: '<url>', desc: '★ Tabbit 后端地址。国内版 web.tabbit.com，国际版 web.tabbit.ai。', default: 'https://web.tabbit.com' },
+  '--base-url': { arg: '<url>', star: true, desc: 'Tabbit 后端地址。国内版 web.tabbit.com，国际版 web.tabbit.ai。', default: 'https://web.tabbit.com' },
   '--skip-clone': { arg: '', desc: '不 clone，只覆盖补丁（目录已存在时用）。', default: false },
   '--dry-run': { arg: '', desc: '只显示会做什么，不写任何文件。', default: false },
   '--help': { arg: '', desc: '显示本帮助。', default: false },
@@ -57,9 +57,9 @@ install.mjs — 一条命令装好 Tabbit 网关
 用法:
   node gateway-patch/install.mjs [选项]
 
-选项（★ = 必须你自己填）:
+选项（★ = 必须你自己填；其余有默认值，可直接用）:
 ${Object.entries(SPEC).map(([f, s]) =>
-  `  ${(s.arg ? '★ ' : '  ')}${f}${s.arg ? ' ' + s.arg : ''}`.padEnd(30) + s.desc
+  `  ${(s.star ? '★ ' : '  ')}${f}${s.arg ? ' ' + s.arg : ''}`.padEnd(30) + s.desc
   + (s.default !== '' && s.default !== false ? `\n${' '.repeat(30)}默认: ${s.default}` : '')
 ).join('\n')}
 
