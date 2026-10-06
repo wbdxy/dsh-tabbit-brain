@@ -39,6 +39,10 @@ const RULES = [
     why: 'OpenAI 风格 API key', level: 'block' },
   { id: 'api-key-assign', re: /(?:api[_-]?key|apikey|secret|passwd|password|token)\s*[:=]\s*["']?(?!\s*$|['"]?\s*[)}\]])[^\s"',;]{12,}/gi,
     why: '疑似硬编码的密钥赋值（12 字符以上）', level: 'review' },
+  // 第三方内置常量（上游网关的 DEFAULT_SIGN_KEY）。它属于 Tabbit、不属于我们，
+  // 而且随版本可能变化——写进文档只会制造会过期的事实。规则留着防止回潮。
+  { id: 'upstream-sign-key', re: /f8d0e6a7[0-9a-f]{24}/g,
+    why: '上游项目内置的签名 key 字面值（应改为指向代码位置，不写值）', level: 'block' },
   { id: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
     why: '私钥文件内容', level: 'block' },
   { id: 'aws-key', re: /\bAKIA[0-9A-Z]{16}\b/g, why: 'AWS Access Key', level: 'block' },

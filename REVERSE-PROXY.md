@@ -57,13 +57,14 @@ instance (see `gateway-patch/README.md`).
 
 ### 2.2 The signing key
 
-`GET /chat/sign-key` returns it. The upstream code also carries a built-in default
-(`f8d0e6a73f8d4b1a9c3d2e1f9a4b7c6d`); the gateway prefers the fetched one and
-falls back to the constant.
+`GET /chat/sign-key` returns it. The upstream code also carries a built-in
+**default constant** used as a fallback (see `DEFAULT_SIGN_KEY` in the gateway's
+`scripts/lib/tabbit.mjs`) — **we deliberately do not print its literal value
+here**: it belongs to Tabbit rather than to us, it can change between versions, and
+writing it down would only create a fact that rots.
 
-> ⚠️ That default is **not ours** — it is a constant baked into the upstream
-> project, and a future version could invalidate it. The gateway re-fetches every
-> 10 minutes.
+What the gateway does: prefer the fetched key, fall back to that constant only if
+the fetch fails, and re-fetch every 10 minutes.
 
 ---
 
