@@ -37,3 +37,9 @@ venv/
 *-report.json
 gl-report.json
 gl-check.json
+
+# 会话中产生的临时探针文件（下划线前缀）
+_*.js
+_*.mjs
+_*.json
+_*.py

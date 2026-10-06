@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-05
+
+### Added
+
+- **`REVERSE-PROXY.md` / `REVERSE-PROXY.zh.md`** — the reverse-proxy operations,
+  documented as a step in their own right rather than left implicit.
+
+  This was missing and it mattered: the project shipped an installer and patches
+  but never explained *what the gateway actually does*. Everything else here —
+  registering a provider, creating a preset, tuning prompts — only makes sense
+  against that mechanism, and every later troubleshooting question lands there.
+
+  The document covers the two-legged auth chain (session cookie + signing key, and
+  why the cookie can only come from a browser), the signing scheme **including the
+  trap that two header names mean the opposite of what they say**
+  (`x-signature` is a random UUID; `x-nonce` is the HMAC), the chat payload shape
+  and why an existing session id is mandatory, the ~20,500-character input cap that
+  caused a real task-loss failure, why images carry no pixel data, and the known
+  imperfections including error 492 being misread as an auth failure.
+
+  The knowledge came from the upstream project's analysis and was **re-checked
+  against the code and our own experiments**; three details did not survive that
+  check and were corrected before publishing (the device-id derivation, and two
+  length figures).
+
+- Setup guides now open with **Step 0: understand the reverse proxy first**, and
+  both READMEs link it above the install instructions.
+
+### Fixed
+
+- Removed a leftover Windows scheduled task that started the gateway **at logon**.
+  It predated the lazy-start design and directly contradicted it: a resident Node
+  process before any delegation, **bypassing the `gatewayWarmup` setting** so the
+  user could not turn it off. Nothing auto-starts now; the gateway comes up in
+  about two seconds when a delegation needs it. (Task XML backed up, reversible.)
+
 ## [0.9.0] - 2026-10-05
 
 ### Added
@@ -329,7 +365,8 @@ The provider was built to fix a measured problem. On the same delegation task:
 | child session size | — | 51 KB vs 5.1 MB parent |
 | model outcome | "there is no task in this message" | complete, correct deliverable |
 
-[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.0
 [0.9.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.9.0
 [0.8.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.8.0
 [0.7.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.7.0

@@ -7,10 +7,34 @@ before this works?**
 
 ---
 
+## Step 0: understand the reverse proxy first (**recommended**)
+
+The entire project rests on one thing: **translating Tabbit's AI backend into an
+OpenAI-compatible API**. Every later step — deploy the gateway, register the
+provider, create the preset — only exists to support that.
+
+So read [`REVERSE-PROXY.md`](REVERSE-PROXY.md) first. It covers:
+
+- why authentication needs **two legs** (session cookie + signing key), and why the
+  cookie can only come from a browser
+- how a request is signed, including the trap where **two header names mean the
+  opposite of what they say**
+- the chat payload shape, and **why an existing session is mandatory**
+- the input-length cap (~20,500) and the real failure it caused — **which is where
+  this plugin's separate-preset design comes from**
+- why images are "understood" but carry no pixel data
+- what is known to be imperfect (including error 492 being misread)
+
+**You can install without reading it, but then you can only guess when something
+breaks.** Every reverse-proxy detail lives there.
+
+---
+
 ## At a glance
 
 | Step | Who | Feasible? |
 |---|---|---|
+| **Read how the reverse proxy works** | **you** | recommended; you can install without it, but then you can only guess |
 | **Install Tabbit Browser and sign in** | **you** | ⚠️ **Required — nothing works without it** |
 | Install Node.js 22+ and DSH | you | required |
 | Deploy the gateway (third-party project + patches) | you | ⚠️ see below, currently awkward |

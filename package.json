@@ -1,6 +1,6 @@
 {
   "name": "dsh-tabbit-brain",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "DeepSeek Harness subagent provider that mounts a clean preset for Tabbit-proxied models — lets a capable main agent delegate pure-reasoning work to models that have no tool calling.",
   "keywords": [
     "dsh",
@@ -41,7 +41,9 @@
     "SETUP.zh.md",
     "scripts",
     "gateway-patch",
-    "tools"
+    "tools",
+    "REVERSE-PROXY.md",
+    "REVERSE-PROXY.zh.md"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

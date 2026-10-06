@@ -86,6 +86,20 @@ point.
 
 ---
 
+## What this is built on
+
+Everything here rests on one thing: **translating Tabbit's AI backend into an
+OpenAI-compatible API**. The gateway is not a magic box — it is a specific set of
+HTTP calls with signed headers, and all of it is written down:
+
+**[REVERSE-PROXY.md](REVERSE-PROXY.md)** — the auth chain, the signing scheme
+(including the trap where two header names mean the opposite of what they say),
+the request shape, the input cap that caused a real failure, and what is known to
+be imperfect.
+
+Read it and every later step has something to stand on. Skip it and you can only
+guess when something breaks.
+
 ## Before you install
 
 Two things must be true on your machine, and neither can be automated:
