@@ -7,7 +7,7 @@ import { BrainService } from '../lib/brain-service.js';
 const requests=[];
 const server=createServer(async(req,res)=>{
  let raw='';for await(const chunk of req)raw+=chunk;
- const body=JSON.parse(raw);requests.push(body);
+ const body=JSON.parse(raw);requests.push({...body,headers:req.headers});
  if(body.messages.at(-1).content==='FAIL'){res.writeHead(401);res.end('invalid credential');return;}
  if(body.messages.at(-1).content==='WAIT')await new Promise(r=>setTimeout(r,200));
  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({model:'TEST_MODEL',choices:[{message:{content:'answer'}}]}));
@@ -19,6 +19,8 @@ const opts={gatewayUrl:`http://127.0.0.1:${server.address().port}`,agentModel:'T
 try {
  const call=(owner,prompt,extra={})=>service.ask({owner,prompt,conversation:'design',...extra},opts);
  const receipt=await call('A','first');assert.equal(receipt.model,'TEST_MODEL');
+ assert.equal(requests.at(-1).headers['x-brain-conversation-id'],receipt.conversationId);
+ assert.match(requests.at(-1).headers['x-brain-request-id'],/^[0-9a-f-]{36}$/);
  await call('A','second');assert.equal(requests.at(-1).messages.length,4);
  await call('B','other');assert.equal(requests.at(-1).messages.length,2,'owner isolation');
  await assert.rejects(call('A','FAIL'),/HTTP 401/);
