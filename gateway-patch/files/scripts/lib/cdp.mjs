@@ -264,6 +264,32 @@ export async function withEphemeralBrowser({
     `--user-data-dir=${userDataDir}`, // 不带这个就拿不到登录态
   ];
 
+  // ── 记账：spawn 之前已经存在的 Tabbit 进程 ──────────────────────────────
+  //
+  // ⚠️ 这里曾经是个会**杀掉用户浏览器**的 bug：清理时按映像名杀掉了所有
+  // `Tabbit Browser.exe`，包括用户自己正开着的那一份。
+  //
+  // 触发路径：用户开着浏览器 → 我们 spawn 的 headless 实例因 Chromium 单实例
+  // 被转交给用户实例、CDP 永远不会就绪 → 超时 → finally 里"清理" →
+  // 把用户浏览器一起杀了。
+  //
+  // 修法：只杀**我们启动之后新出现**的进程。用户实例的 PID 在 spawn 前就记下了，
+  // 永远不在击杀名单里。
+  const preexisting = new Set(tabbitProcessIds(['Tabbit Browser.exe', 'Tabbit.exe']));
+  if (preexisting.size > 0) {
+    // 用户已经开着浏览器，而且 CDP 不可达（上面已探测过）——**别再试了**。
+    //
+    // Chromium 是单实例的：我们再 spawn 一个带 --headless 和同一个 profile 的进程，
+    // 它会被转交给用户那个实例，调试端口永远不会出现。实测要白等满 45 秒才超时，
+    // 期间用户什么也得不到。
+    //
+    // 直接如实返回，让调用方沿用旧 cookie——旧 cookie 通常还有效，模型照样能调。
+    log(`Tabbit 已在运行（${preexisting.size} 个进程）但没有调试端口，无法从中读取 cookie；`
+      + '不尝试新建实例（单实例会转交给已有实例，端口不会出现）。'
+      + '如需续期，请先完全退出 Tabbit，或在网关 .env 里设 TABBIT_KILL_EXISTING_BROWSER=1 允许重启它。');
+    return { ok: false, action: 'browser-running-without-cdp' };
+  }
+
   log(`启动短命 headless 实例取 cookie（端口 ${port}）`);
   try {
     const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
@@ -275,8 +301,14 @@ export async function withEphemeralBrowser({
 
   const killIt = () => {
     try {
-      killProcessTree(tabbitProcessIds(['Tabbit Browser.exe', 'Tabbit.exe']), () => {});
-      log('已结束短命 headless 实例');
+      const now = tabbitProcessIds(['Tabbit Browser.exe', 'Tabbit.exe']);
+      const ours = now.filter((id) => !preexisting.has(id));
+      if (ours.length === 0) {
+        log('没有需要清理的实例（本次 spawn 未产生新进程）');
+        return;
+      }
+      killProcessTree(ours, () => {});
+      log(`已结束短命 headless 实例（${ours.length} 个进程）`);
     } catch { /* 尽力而为 */ }
   };
 

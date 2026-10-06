@@ -6,6 +6,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-06
+
+### Fixed
+
+- **A cookie-renewal failure could kill the user's browser.** The cleanup path
+  killed every process named `Tabbit Browser.exe` by image name, with no
+  distinction between the instance we spawned and one the user was using.
+
+  The path to it: the user has Tabbit open -> our headless spawn is handed off to
+  their instance by Chromium's single-instance rule, so CDP never appears ->
+  timeout -> the `finally` cleanup runs -> it kills their browser too. Found by
+  testing exactly the scenario the plugin is meant to support.
+
+  Cleanup now records the Tabbit process IDs that existed *before* the spawn and
+  kills only ones that appeared after it. A user's browser is never in that set.
+
+- The same case no longer burns 45 seconds before failing. If Tabbit is already
+  running without a debug port, the attempt is pointless — single-instance
+  hand-off guarantees the port never appears — so it now returns immediately with
+  `browser-running-without-cdp` and reuses the existing cookie.
+
+### Documented
+
+- **When cookie renewal works, and the one case that needs the user**, in
+  `gateway-patch/README.md` and both setup guides. Renewal is scheduled (gateway
+  start, every 6 hours, on auth errors), so the deciding factor is the state *at
+  that moment*, not who opened the browser or whether the cookie had expired:
+
+  | state at that moment | result |
+  |---|---|
+  | Tabbit not running | windowless instance reads the cookie, then dies |
+  | Tabbit running with a debug port | read straight from it |
+  | Tabbit running, normal launch | renewal skipped, existing cookie reused |
+
+  Only the third case ever needs the user, and only once the cookie has actually
+  expired: quit Tabbit completely and the next renewal succeeds. Skipping is not
+  breaking — the existing cookie is reused, usually for hours or days.
+
 ## [0.10.1] - 2026-10-06
 
 ### Fixed
@@ -395,7 +433,8 @@ The provider was built to fix a measured problem. On the same delegation task:
 | child session size | — | 51 KB vs 5.1 MB parent |
 | model outcome | "there is no task in this message" | complete, correct deliverable |
 
-[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.2
 [0.10.1]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.1
 [0.10.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.0
 [0.9.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.9.0

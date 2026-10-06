@@ -339,6 +339,35 @@ Set the API key environment variable (same value as `API_KEY` in the gateway `.e
 
 ---
 
+## Cookie renewal: the one case that needs you
+
+**This is the most confusing part of using the plugin.**
+
+Renewal does **not** only happen when the cookie expires — it is scheduled (at
+gateway start, every 6 hours, and on any auth error).
+
+| State at that moment | Result |
+|---|---|
+| **Tabbit not running** | ✅ the gateway starts a windowless instance, reads the cookie, kills it. You notice nothing |
+| **Tabbit running, started with the debug port** | ✅ read straight from it. You notice nothing |
+| **Tabbit running, started normally** | ⚠️ **this renewal is skipped**; the existing cookie is reused |
+
+### The three rules
+
+> 1. **Tabbit not open** -> renewal always works; nothing for you to do.
+> 2. **Tabbit open (normal launch)** -> that renewal is skipped, but the existing
+>    cookie is reused, so it is usually unnoticeable.
+> 3. **The only case that needs you**: the cookie has actually expired **and** you
+>    have Tabbit open. -> **Quit Tabbit completely** (confirm no leftover process),
+>    and the next renewal succeeds on its own.
+
+**Why case 3 cannot be automatic**: Chromium is single-instance — another instance
+is handed off to the running one and the debug port never appears. Handling it
+automatically would mean **closing your browser**, which is worse than waiting one
+renewal cycle.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
