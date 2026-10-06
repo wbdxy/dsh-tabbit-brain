@@ -37,7 +37,7 @@ breaks.** Every reverse-proxy detail lives there.
 | **Read how the reverse proxy works** | **you** | recommended; you can install without it, but then you can only guess |
 | **Install Tabbit Browser and sign in** | **you** | ⚠️ **Required — nothing works without it** |
 | Install Node.js 22+ and DSH | you | required |
-| Deploy the gateway (third-party project + patches) | you | ⚠️ see below, currently awkward |
+| Deploy the gateway (clone upstream + overlay our changes) | you | **one command** (the installer does it all) |
 | Install this plugin | you | one command |
 | Register the provider in `settings.yaml` | you | copy-paste |
 | Create the child preset | you | copy-paste |

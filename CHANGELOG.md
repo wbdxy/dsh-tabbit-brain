@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-06
+
+### Fixed
+
+Documentation drift: four places described behaviour the code no longer had. All
+four were introduced by *later* changes that did not go back and update the text
+describing them.
+
+- Both README config tables were missing `gatewayWarmup` — the setting that
+  decides whether the gateway starts with DSH or waits for the first delegation.
+  Eleven fields were listed; the schema has twelve.
+- The setup overview still called deploying the gateway "awkward, see below",
+  from before `gateway-patch/install.mjs` reduced it to one command.
+- The Development section said `tools/` was not part of the published package.
+  It is — it is listed in `files` and contains user-runnable audits, now
+  documented as a table instead of a dismissal.
+- `REVERSE-PROXY{,.zh}.md` linked to `../gateway-patch/README.md`, which from
+  the repository root points outside it.
+
+### Added
+
+- **`tools/audit-docs.mjs`** (`npm run audit:docs`) — checks internal links,
+  repository path references, `npm run` targets, the config table against the
+  code schema, version agreement between `package.json` and the CHANGELOG, and
+  EN/ZH section-count symmetry. It reports zero findings after the fixes above.
+
+  It exists because this class of drift is invisible to review: every individual
+  document reads correctly, and only a comparison against the code reveals that
+  it describes an older design.
+
 ## [0.10.0] - 2026-10-05
 
 ### Added
@@ -365,7 +395,8 @@ The provider was built to fix a measured problem. On the same delegation task:
 | child session size | — | 51 KB vs 5.1 MB parent |
 | model outcome | "there is no task in this message" | complete, correct deliverable |
 
-[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.1
 [0.10.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.0
 [0.9.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.9.0
 [0.8.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.8.0

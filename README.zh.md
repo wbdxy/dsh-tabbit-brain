@@ -171,7 +171,8 @@ dsh plugin --profile <profile> add link:/path/to/dsh-tabbit-brain
 | `agentProvider` | `tabbit-local` | 子代理默认路由：DSH provider 名。 |
 | `agentModel` | `DeepSeek-V4.1-Flash` | 子代理默认路由：模型名。 |
 | `gatewayUrl` | `http://127.0.0.1:8787` | 网关基地址；探测它的 `/healthz`。 |
-| `gatewayAutoStart` | `false` | 托管网关可用性（见下）。 |
+| `gatewayAutoStart` | `false` | 托管网关可用性 —— **按需启动**（见下）。 |
+| `gatewayWarmup` | `false` | 加载时也把它拉起来，而不是等第一次委派。用一个常驻进程换更快的首次调用。 |
 | `gatewayStartCommand` | *(空)* | 启动网关的 shell 命令。留空则不自动启动。 |
 | `gatewayStartCwd` | *(空)* | 启动命令的工作目录。 |
 | `gatewayStartTimeoutMs` | `20000` | 启动后等待健康检查通过的最长时间。 |
@@ -321,8 +322,18 @@ npm run check     # node --check lib/index.js
 ```
 
 要让本地插件目录解析 `@deepseek-ai/*`，把它的 `node_modules` 指向你的 DSH 安装
-（Windows 用 junction，其他平台用 symlink）。`tools/` 放的是开发期脚本，
-属于诊断工具，不在发布范围内。
+（Windows 用 junction，其他平台用 symlink）。
+
+`tools/` **在发布范围内** —— 里面是你可以直接跑的脚本：
+
+| 脚本 | 作用 |
+|---|---|
+| `scan-secrets.mjs` | 发布前凭证/路径扫描（`npm run scan`） |
+| `audit-deadcode.mjs` | 未使用导出、孤儿文件、残留调试输出 |
+| `verify_tabbit_brain.py` | 重启 DSH 后的三步自检 |
+| `test_plugin_chain.mjs` | 冷启动端到端检查 |
+| `test_gateway_autostart.mjs` | 网关按需拉起检查 |
+| `settings_live_test.py` | 设置热重载检查 |
 
 ---
 

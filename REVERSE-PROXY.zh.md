@@ -230,7 +230,7 @@ id: 123
 ## 九、我们改了什么
 
 上游网关能跑，但在**无人值守**场景下有几个硬伤。我们的改动都在
-[`gateway-patch/`](../gateway-patch/README.md)：
+[`gateway-patch/`](gateway-patch/README.md)：
 
 1. **cookie 续期**：上游要求浏览器带 `--remote-debugging-port` 启动。我们改成
    **短命 headless 实例**——按需起、取完即杀，全程无窗口、不留常驻进程。

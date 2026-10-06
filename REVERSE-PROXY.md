@@ -247,7 +247,7 @@ Recorded so nobody has to rediscover it:
 ## 9. What we changed
 
 The upstream gateway works, but has hard edges for an **unattended** deployment.
-Our changes live in [`gateway-patch/`](../gateway-patch/README.md):
+Our changes live in [`gateway-patch/`](gateway-patch/README.md):
 
 1. **Cookie renewal**: upstream expects the browser to have been started with
    `--remote-debugging-port`. We use a **short-lived headless instance** instead —

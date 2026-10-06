@@ -193,7 +193,8 @@ delegation with no plugin reload.
 | `agentProvider` | `tabbit-local` | Default child route: DSH provider name. |
 | `agentModel` | `DeepSeek-V4.1-Flash` | Default child route: model name. |
 | `gatewayUrl` | `http://127.0.0.1:8787` | Gateway base URL; its `/healthz` is probed. |
-| `gatewayAutoStart` | `false` | Keep the gateway up (see below). |
+| `gatewayAutoStart` | `false` | Keep the gateway up, **on demand** (see below). |
+| `gatewayWarmup` | `false` | Also start it when DSH loads rather than on the first delegation. Trades a resident process for a faster first call. |
 | `gatewayStartCommand` | *(empty)* | Shell command that starts the gateway. Empty disables auto-start. |
 | `gatewayStartCwd` | *(empty)* | Working directory for that command. |
 | `gatewayStartTimeoutMs` | `20000` | How long to wait for health after starting. |
@@ -363,8 +364,18 @@ npm run check     # node --check lib/index.js
 
 For a local plugin directory to resolve `@deepseek-ai/*`, point its
 `node_modules` at your DSH installation (junction on Windows, symlink
-elsewhere). `tools/` holds the scripts used during development — they are
-diagnostics, not part of the published package.
+elsewhere).
+
+`tools/` **is** part of the published package — it holds scripts you can run:
+
+| Script | Purpose |
+|---|---|
+| `scan-secrets.mjs` | pre-release credential/path scan (`npm run scan`) |
+| `audit-deadcode.mjs` | unused exports, orphan files, stray debug output |
+| `verify_tabbit_brain.py` | three-step self-check after a DSH restart |
+| `test_plugin_chain.mjs` | cold-start end-to-end check |
+| `test_gateway_autostart.mjs` | gateway start-on-demand check |
+| `settings_live_test.py` | settings hot-reload check |
 
 ---
 
