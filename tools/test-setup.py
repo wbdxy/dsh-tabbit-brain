@@ -51,7 +51,8 @@ class SetupTests(unittest.TestCase):
                 if 'existing:' in initial:
                     self.assertEqual(data['llm-pi-ai']['providers']['existing']['baseURL'], 'https://example.com/v1')
                 tool = yaml.safe_load((home / '.agent-presets/main/agent.cordis.yml').read_text(encoding='utf-8'))
-                self.assertEqual(tool[0]['config']['provider'], 'tabbit')
+                self.assertEqual(tool, [], 'setup must not modify main presets')
+                self.assertFalse((home / '.agent-presets/tabbit-brain').exists(), 'no child preset required')
                 before = self.snapshot(home)
                 again = self.run_setup(home, '--write-settings')
                 self.assertEqual(again.returncode, 0, again.stderr)

@@ -37,7 +37,7 @@ const SPEC = {
   },
   '--preset-id': {
     arg: '<id>',
-    desc: '子代理挂载的预设 id。默认 tabbit-brain，一般不用改。',
+    desc: 'Legacy option; ignored by the internal Brain service.',
     hint: '',
     default: 'tabbit-brain',
   },
@@ -70,7 +70,7 @@ const SPEC = {
   '--mount-preset': {
     star: true,
     arg: '<name>',
-    desc: '把委派工具挂到哪个预设（你主对话用的那个）。',
+    desc: 'Legacy option; no preset mounting is needed.',
     hint: '默认读 settings.yaml 的 agent-presets.default',
     default: '',
   },
@@ -187,42 +187,6 @@ function checkEnv(a) {
   }).then((r) => r.ok).catch(() => false);
 }
 
-function writePreset(a) {
-  step(2, `创建子代理预设 "${a.preset_id}"`);
-  log('    作用: 子代理挂载的极简预设。persona complete:true + 不挂任何工具行。');
-  log('    为什么需要: 父预设很大，直接继承会把任务淹没（实测提示词 61,031 字符）。');
-
-  const dir = join(DSH_HOME, '.agent-presets', a.preset_id);
-  const manifest = join(dir, 'preset.yml');
-  const composition = join(dir, 'agent.cordis.yml');
-
-  if (existsSync(composition) && !a.force) {
-    skip(`${dir} 已存在，跳过（要覆盖加 --force）`);
-    return;
-  }
-
-  write(manifest, `name: Tabbit 外置大脑
-order: 51
-description: 子代理挂载的极简预设：persona complete:true，不挂任何工具。
-`);
-  write(composition, `- id: persona
-  name: '@deepseek-ai/dsh-persona'
-  config:
-    complete: true
-    includeRuntimeContext: false
-    prefix: |-
-      你是一个纯推理单元。你没有工具：不能执行命令、读写文件，
-      也访问不到 MCP 服务器或 Skill 注册表。
-
-      你的输出会被一个拥有这些工具的主 agent 消费。
-      所以请产出自包含的成品——分析、设计、代码、结论——
-      不要说"我来读取文件"。需要材料时明确说出你需要什么，调用方会取回来。
-
-      直接、准确、简洁地回答。不要编造。
-`);
-  ok(`已写入 ${dir}`);
-}
-
 function loadYaml(file, fallback, kind) {
   const document = parseDocument(existsSync(file) ? readFileSync(file, 'utf8') : fallback);
   if (document.errors.length) throw new Error(kind + ': ' + document.errors[0].message);
@@ -244,13 +208,7 @@ function preflight(a) {
     requireMap(data['llm-pi-ai'], 'llm-pi-ai');
     if (data['llm-pi-ai'].providers != null) requireMap(data['llm-pi-ai'].providers, 'providers');
   }
-  const target = a.mount_preset || data['agent-presets']?.default;
-  if (!target) throw new Error('Specify --mount-preset or agent-presets.default');
-  const presetFile = join(DSH_HOME, '.agent-presets', target, 'agent.cordis.yml');
-  if (!existsSync(presetFile)) throw new Error('Main preset not found: ' + target);
-  const presetDocument = loadYaml(presetFile, '[]\n', 'main preset');
-  if (!Array.isArray(presetDocument.toJS())) throw new Error('Main preset must be a YAML sequence');
-  return { document, data, target, presetFile, presetDocument };
+  return { document, data };
 }
 
 function registerProvider(a, prepared) {
@@ -271,19 +229,6 @@ function registerProvider(a, prepared) {
   else warn('Settings not written; use --write-settings to enable this step');
 }
 
-function mountTool(a, prepared) {
-  step(4, 'Mount delegation tool in ' + prepared.target);
-  const document = prepared.presetDocument;
-  const rows = document.toJS();
-  if (rows.some(row => row?.id === 'tool-subagent-tabbit')) {
-    skip('Tool already mounted; preserved');
-    return;
-  }
-  document.add({ id: 'tool-subagent-tabbit', name: '@deepseek-ai/dsh-tool-subagent',
-    config: { provider: 'tabbit', toolName: 'subagent_tabbit', backgroundMode: 'continuable' } });
-  write(prepared.presetFile, document.toString());
-}
-
 // ─── 主流程 ──────────────────────────────────────────────────────────────────
 
 const args = parseArgs(process.argv.slice(2));
@@ -296,7 +241,7 @@ log(`\n  dsh-tabbit-brain 安装助手${DRY ? '  [DRY-RUN，不会写任何文�
 let prepared;
 try {
   if (!args.models.trim()) throw new Error('Specify --models');
-  for (const value of [args.preset_id, args.mount_preset, args.provider].filter(Boolean)) {
+  for (const value of [args.provider].filter(Boolean)) {
     if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('Invalid identifier: ' + value);
   }
   prepared = preflight(args);
@@ -314,10 +259,8 @@ if (!gatewayUp) {
   warn(`  healthz: ${args.base_url.replace(/\/v1\/?$/, '')}/healthz`);
 }
 
-writePreset(args);
 registerProvider(args, prepared);
 
-mountTool(args, prepared);
 
 step(5, '还需要你手动做的事');
 log('    1. 设置 API key 环境变量：');

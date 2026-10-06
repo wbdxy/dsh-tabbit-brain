@@ -1,48 +1,17 @@
-# dsh-tabbit-brain 的 bundle 补丁层。
-#
-# 只做一件事：在宿主组合里插入一行，注册 tabbit-brain 子代理提供方。
-#
-# `subagents` 注册表是宿主平面的进程单例（内置的 spawn / fork 后端也注册在那一层），
-# 所以这一行必须顶层插入，不能挂在 agent 平面的预设里——否则每个会话会各自注册
-# 一次同名 provider，第二个会话就冲突了。
-#
-# 注册之后，agent 预设里的 `tool-subagent` 就能引用它：
-#
-#   - id: tool-subagent-tabbit
-#     name: '@deepseek-ai/dsh-tool-subagent'
-#     config:
-#       provider: tabbit          # ← 与本文件的 providerName 对应
-#       toolName: subagent_tabbit
-#
-# 注意两点：
-#
-# 1. 用本 provider 的 tool-subagent **不需要** `persona`——provider 会在子代理的
-#    创建窗口里挂载 `presetId` 指定的完整预设，提示词由那个预设决定。
-#
-# 2. **也不要**在那个 tool-subagent 上写 `agentOptions`：它会经 tool-subagent
-#    解析后进入 request，优先级高于本插件的设置，导致「改设置不生效」。
-#    路由的唯一真源是本插件的设置（命名空间 `tabbit-brain`）。
+# Host-level private Brain service; no DSH child agents or companion preset.
 - insert:
-    - id: tabbit-brain-provider
+    - id: tabbit-brain
       name: dsh-tabbit-brain
       config:
-        providerName: tabbit
-        presetId: tabbit-brain
-        agentProvider: tabbit-local
         agentModel: DeepSeek-V4.1-Flash
-
-        # ── 网关托管 ────────────────────────────────────────────────────────
-        # 懒启动：加载时什么都不做，第一次委派时才探测并拉起。
-        # 探测只判断进程是否活着（任何 HTTP 响应都算数），因此不需要 API key。
+        apiKeyEnv: TABBIT_API_KEY
         gatewayUrl: http://127.0.0.1:8787
         gatewayAutoStart: true
-        # 想换成「DSH 启动即拉起」就把这里改成 true（代价是常驻一个进程）
         gatewayWarmup: false
-        gatewayStartCommand: node "src\server.mjs"
-        # 改成你自己的网关安装路径（安装器默认装到 ~/.tabbit-gateway/tabbit-toy）
+        gatewayStartCommand: node src/server.mjs
         gatewayStartCwd: ~/.tabbit-gateway/tabbit-toy
         gatewayStartTimeoutMs: 30000
-
-        # 排查「预设挂载 / 网关拉起是否生效」时打开；日志落在插件目录的 trace.log
+        contextBudgetChars: 16000
+        requestTimeoutMs: 120000
+        delegationStyle: standard
         diagnostics: false
-        diagnosticsPath: ''

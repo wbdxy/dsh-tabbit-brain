@@ -1,7 +1,7 @@
 {
   "name": "dsh-tabbit-brain",
-  "version": "0.11.1",
-  "description": "DeepSeek Harness subagent provider that mounts a clean preset for Tabbit-proxied models — lets a capable main agent delegate pure-reasoning work to models that have no tool calling.",
+  "version": "0.12.0",
+  "description": "Private text-only Tabbit reasoning conversations inside DSH, with direct gateway requests and background jobs.",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -43,7 +43,9 @@
     "gateway-patch",
     "tools",
     "REVERSE-PROXY.md",
-    "REVERSE-PROXY.zh.md"
+    "REVERSE-PROXY.zh.md",
+    "docs",
+    "package-lock.json"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -55,19 +57,16 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-agent": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
-    "@deepseek-ai/dsh-brand": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
-    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
-    "@deepseek-ai/dsh-session": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
-    "@deepseek-ai/dsh-subagent": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
-    "@deepseek-ai/dsh-tool-subagent": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
-    "@deepseek-ai/schemastery": ">=3.18.0"
+    "@deepseek-ai/schemastery": ">=3.18.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 || >=0.1.2-alpha.1",
+    "@deepseek-ai/dsh-jobs": ">=0.1.1-rc.2 || >=0.1.2-alpha.1"
   },
   "scripts": {
     "check": "node --check lib/index.js",
     "setup": "node scripts/setup.mjs",
     "scan": "node tools/scan-secrets.mjs",
-    "audit:docs": "node tools/audit-docs.mjs"
+    "audit:docs": "node tools/audit-docs.mjs",
+    "test:brain": "node tools/test-brain-service.mjs && node tools/test-brain-tools.mjs"
   },
   "dependencies": {
     "yaml": "^2.8.3"

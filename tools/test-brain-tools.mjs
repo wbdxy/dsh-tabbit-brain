@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { installBrainTools } from '../lib/brain-tool.js';
+const defs=new Map(), events=new Map(), cleanup=[];let creates=0,calls=[];
+const main={session:{id:'owner',header:{}},ctx:{inject(deps,fn){fn(runtime);return{dispose(){}}}}};
+const runtime={tools:{register(d){defs.set(d.name,d);return()=>defs.delete(d.name)}},jobs:{start(job){globalThis.job=job;return 'fixture-job'}}};
+const ctx={agents:{list:()=>[main]},on(n,f){events.set(n,f)},effect(f){cleanup.push(f())}};
+const service={ask(req,opts){calls.push({req,opts});return Promise.resolve({content:'fixture reply',model:opts.agentModel})},reset(owner,c){return{owner,conversation:c}},release(){},dispose(){}};
+installBrainTools(ctx,service,()=>({agentModel:'FIXTURE'}),async()=>({ok:true}));
+assert.deepEqual([...defs.keys()],['tabbit_brain','tabbit_brain_reset']);
+const signal=new AbortController().signal;
+const bg=await defs.get('tabbit_brain').execute({description:'test',prompt:'hello'}, {agent:main,signal});
+assert.equal(bg.kind,'background');assert.equal(bg.jobId,'fixture-job');
+const task=globalThis.job.run();await task.done;assert.equal(calls[0].req.owner,'owner');
+const fg=await defs.get('tabbit_brain').execute({description:'test',prompt:'followup',conversation:'design',run_in_background:false},{agent:main,signal});
+assert.equal(fg.kind,'foreground');assert.equal(calls[1].req.conversation,'design');
+assert.equal(creates,0,'No agent factory involved');cleanup.forEach(f=>f());
+console.log('PASS Brain tools: foreground, background job, owner scope, reset registration; no child agent factory');

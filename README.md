@@ -1,409 +1,58 @@
 # dsh-tabbit-brain
 
-**English** | [简体中文](README.zh.md)
+[简体中文](README.zh.md)
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) subagent
-provider that gives a child agent a **clean, purpose-built system prompt**
-instead of inheriting its parent's composition.
+## Private reasoning conversations inside DSH
 
-It exists because of a concrete, measured failure — see [Why](#why-this-exists).
+The main AI calls a local Tabbit gateway through `tabbit_brain`. The plugin owns its prompt and history: no DSH child agent, inherited tools, skill catalog, or main-conversation history. No additional UI window.
 
----
+Install and prerequisites: [SETUP.md](SETUP.md).
+Gateway protocol: [REVERSE-PROXY.md](REVERSE-PROXY.md).
 
-> **Requires a signed-in Tabbit Browser account.** See [SETUP.md](SETUP.md) for the full walkthrough.
+## Tools and conversations
 
-## Why this exists
+- `tabbit_brain`: `description`, `prompt`, optional `conversation` and `run_in_background`. Background is default; returns job ID. Collect with `job_output`, cancel with `job_kill`. Foreground returns content and route receipt.
+- `tabbit_brain_reset`: clears one idle history label within the caller session.
+- Histories are keyed by main-session ID and conversation label. Same-label requests serialize; different labels are independent. History is memory-only and is lost on DSH restart. Failed turns do not enter history.
+- Each request snapshots settings. Current task must fit `contextBudgetChars`; older complete pairs are dropped to fit. No silent truncation of the current task.
+- Requests contain no `tools` or `tool_choice`. Receipts contain requestId, endpoint and gateway-reported model; those identify local routing, not the upstream vendor's internal model implementation.
 
-DSH's built-in `spawn` / `fork` drivers compose a child agent with
-`applyChildComposition(childCtx, parent, …)`: **the child inherits the parent's
-preset**. If the parent preset is large — a router preset, a preset that mounts
-a skill catalog, a preset that injects a persona frame — all of that lands in
-the child's system prompt.
+## Global entry and startup restrictions
 
-`persona` config can shadow *the persona section only*. It cannot remove the
-other injected sections.
-
-Measured on a real delegation to a model served by a local Tabbit gateway
-(which has a hard input ceiling of roughly 20,500 characters):
-
-| | before | after |
-|---|---|---|
-| child prompt sent upstream | **61,031 chars**, truncated to 18,635 | under the ceiling — no truncation |
-| child session preset | inherited `router-standard` | **`tabbit-brain`** |
-| child session size | — | 51 KB (parent: 5.1 MB) |
-| what the model reported | *"this message is framework injection plus a skills list — there is no task"* | complete, correct deliverable |
-
-The task was lost inside 61 KB of prompt the child could not use.
-
----
-
-## How it works
-
-DSH has three seams; this plugin uses all three.
-
-**1. The `subagents` provider registry.** A provider is a small object:
-
-```js
-{ name, capabilities, inheritsParentContext, start(request), prepareContinuable() }
-```
-
-**2. `agentPresets.mount(agentCtx, id)`.** The agent factory's `setup` runs
-inside the child's creation window and supports `async`. Instead of joining the
-parent's composition:
-
-```js
-// built-in drivers do this — child inherits the parent preset
-applyChildComposition(childCtx, parent, { persona, toolFilter })
-
-// this plugin does this — child gets its own preset
-await presets.mount(childCtx, opts.presetId)
-```
-
-A rejection rolls the agent creation back, so a broken preset never yields a
-half-composed session.
-
-**3. The skill catalog resolves against the preset layer.** DSH warns when an
-agent joins no preset:
-
-> its tools, prompt sections, and **skill catalog** resolve against the empty
-> global layer
-
-So a preset whose persona is `complete: true` (and which mounts no tool rows)
-gets a genuinely clean prompt — later assembly listeners cannot add text.
-
-Resulting shape:
-
-```
-main agent (full tools, large preset)
-  └─ subagent_tabbit  ──►  provider "tabbit"
-                             └─ child agent composed on preset "tabbit-brain"
-                                  persona complete:true, ~926 chars, no tools
-                                  routed to a Tabbit-gateway model
-```
-
-The child can reason but cannot act; the parent can act. That division is the
-point.
-
----
-
-## What this is built on
-
-Everything here rests on one thing: **translating Tabbit's AI backend into an
-OpenAI-compatible API**. The gateway is not a magic box — it is a specific set of
-HTTP calls with signed headers, and all of it is written down:
-
-**[REVERSE-PROXY.md](REVERSE-PROXY.md)** — the auth chain, the signing scheme
-(including the trap where two header names mean the opposite of what they say),
-the request shape, the input cap that caused a real failure, and what is known to
-be imperfect.
-
-Read it and every later step has something to stand on. Skip it and you can only
-guess when something breaks.
-
-## Before you install
-
-Two things must be true on your machine, and neither can be automated:
-
-1. **Tabbit Browser is installed and you are signed in.** Cookie renewal works by
-   reading the session out of your own browser. No account, no cookies, no chain.
-   Accounts are free; signing in is a hard prerequisite.
-2. **You have somewhere to run the gateway.** This plugin keeps a gateway alive
-   and delegates to it — it does not ship one. See the setup guide.
-
-**Full walkthrough, step by step, with what you do versus what happens
-automatically: [SETUP.md](SETUP.md)**
-
-The short version of what is manual: deploy the gateway, install the plugin,
-register the provider, create the child preset, mount the delegation tool.
-The short version of what is automatic: starting the gateway, finding the browser
-installation, renewing cookies, injecting the delegation guidance.
-
-## Install
-
-```bash
-# from npm (once published)
-dsh plugin --profile <profile> add dsh-tabbit-brain
-
-# from a local checkout
-dsh plugin --profile <profile> add link:/path/to/dsh-tabbit-brain
-```
-
-Then mount the delegation tool. Add a `tool-subagent` instance to your agent
-preset:
-
-```yaml
-- id: tool-subagent-tabbit
-  name: '@deepseek-ai/dsh-tool-subagent'
-  config:
-    provider: tabbit            # matches providerName below
-    toolName: subagent_tabbit
-    backgroundMode: continuable
-    # do NOT set persona      — the mounted preset provides the prompt
-    # do NOT set agentOptions  — routing comes from this plugin's settings
-```
-
-> **Both omissions are deliberate.** `persona` is unnecessary because the child
-> mounts a whole preset. `agentOptions` is actively harmful: it is resolved by
-> `tool-subagent` into `request.agentOptions`, where it **outranks this plugin's
-> settings** — setting a model in the settings UI would silently have no effect.
-
----
-
-## The companion preset
-
-The provider mounts whatever `presetId` names. You need that preset to exist.
-A minimal one looks like this (DSH's shipped `minimal` preset is the template,
-minus its persistent-shell rows):
-
-```yaml
-# ~/.dsh/.agent-presets/tabbit-brain/agent.cordis.yml
-- id: persona
-  name: '@deepseek-ai/dsh-persona'
-  config:
-    complete: true                 # this prefix IS the whole system prompt
-    includeRuntimeContext: false   # no runtime-context snapshot
-    prefix: |-
-      You are a pure reasoning unit. You have no tools: you cannot run
-      commands, read or write files, or reach MCP servers or the skill
-      registry.
-
-      Your output is consumed by a main agent that DOES have those tools.
-      So produce a self-contained deliverable — analysis, design, code,
-      conclusion — and never say "I will read the file". If you need
-      material, state exactly what you need and the caller will fetch it.
-
-      Answer directly, accurately, and concisely. Do not fabricate.
-```
-
-No tool rows. Every tool schema is dead weight for a model that cannot call
-tools — it burns the input budget and reads as an injection attempt.
-
----
+Tools install in ordinary main-agent own scopes, independent of preset. Child agents are excluded. `router-standard` still requires its normal first `phase_begin` before assembly exposes other tools. Own-layer registration is exempt from inherited DSH allow/deny filters; disable this plugin to prohibit the capability. There is no automatic phase advancement.
 
 ## Configuration
 
-Settings live under the `tabbit-brain` namespace and are **hot-reloaded**: the
-provider re-reads them on every `start()`, so a change takes effect on the next
-delegation with no plugin reload.
+| Field | Schema default |
+|---|---|
+| `agentModel` | 'DeepSeek-V4.1-Flash' |
+| `apiKeyEnv` | 'TABBIT_API_KEY' |
+| `brainPrompt` | bundled text-only prompt |
+| `contextBudgetChars` | 16000 |
+| `requestTimeoutMs` | 120000 |
+| `gatewayUrl` | 'http://127.0.0.1:8787' |
+| `gatewayAutoStart` | false |
+| `gatewayWarmup` | false |
+| `gatewayStartCommand` | '' |
+| `gatewayStartCwd` | '' |
+| `gatewayStartTimeoutMs` | 20000 |
+| `delegationStyle` | 'standard' |
+| `diagnostics` | false |
+| `diagnosticsPath` | '' |
 
-| Field | Default | Meaning |
-|---|---|---|
-| `providerName` | `tabbit` | Registration name. Must match `provider:` in the tool config. **Changing it needs a plugin reload.** |
-| `presetId` | `tabbit-brain` | Preset the child mounts. |
-| `agentProvider` | `tabbit-local` | Default child route: DSH provider name. |
-| `agentModel` | `DeepSeek-V4.1-Flash` | Default child route: model name. |
-| `gatewayUrl` | `http://127.0.0.1:8787` | Gateway base URL; its `/healthz` is probed. |
-| `gatewayAutoStart` | `false` | Keep the gateway up, **on demand** (see below). |
-| `gatewayWarmup` | `false` | Also start it when DSH loads rather than on the first delegation. Trades a resident process for a faster first call. |
-| `gatewayStartCommand` | *(empty)* | Shell command that starts the gateway. Empty disables auto-start. |
-| `gatewayStartCwd` | *(empty)* | Working directory for that command. |
-| `gatewayStartTimeoutMs` | `20000` | How long to wait for health after starting. |
-| `delegationStyle` | `standard` | How the shipped guidance instructs the agent: `off`, `standard` (decompose first, parallelise the reasoning half), or `aggressive` (delegate more readily). |
-| `diagnostics` | `false` | Write a diagnostic log. |
-| `diagnosticsPath` | *(plugin dir)/trace.log* | Where that log goes. |
+Set `apiKeyEnv` to the name of the environment variable holding the gateway key. Do not put the key in source or docs. `brainPrompt` is shipped in the package; no companion DSH preset is required. Gateway auto-start is lazy unless warmup is enabled. A detached gateway can outlive DSH.
 
-Precedence, lowest to highest:
+## Limits and verification
 
-```
-deployment baseline (cordis.patch.yml config)
-  → user settings (tabbit-brain namespace)
-    → per-call override (when modelSelectionSettings is enabled)
-```
-
-### Diagnostics
-
-Turn `diagnostics` on when you need to confirm the preset mount actually ran:
-
-```
-2026-10-05T09:37:59.902Z  setup OK: mounted preset "tabbit-brain" for child 4904ad0b-…
-2026-10-05T09:40:38.825Z  settings changed -> preset="tabbit-brain" route=tabbit-local/DeepSeek-V4.1-Flash
-```
-
-If the mount fails you get `setup FAILED: mount("…") threw: …` and the child
-creation is rolled back rather than silently running under the wrong preset.
-
----
-
-## Gateway management
-
-A local gateway is a separate process. Forgetting to start it — or losing it to
-a crash — shows up as a confusing network error halfway through a delegation.
-Enable `gatewayAutoStart` and the plugin starts it **on demand**:
-
-- **Nothing runs at load time.** The gateway is started by the first delegation
-  that needs it, so you do not pay for a resident process you might not use.
-- Before **every** delegation the gateway's `/healthz` is probed (cheap loopback
-  call, results cached for 15 s). If it is unreachable, `gatewayStartCommand` is
-  run detached and the plugin polls until health returns.
-- If it still is not up, the delegation **fails fast** with an actionable message
-  instead of a mystery network error.
-
-```yaml
-gatewayUrl: http://127.0.0.1:8787
-gatewayAutoStart: true          # start it when a delegation needs it
-gatewayWarmup: false            # true = also start it when DSH loads
-gatewayStartCommand: node "src\server.mjs"
-gatewayStartCwd: ~/.tabbit-gateway/tabbit-toy
-gatewayStartTimeoutMs: 30000
-```
-
-Set `gatewayWarmup: true` if you would rather trade a resident process for a
-faster first delegation.
-
-Two details worth knowing:
-
-- **Liveness is any HTTP response.** The probe does not check the status code:
-  a gateway that authenticates before routing replies `401` to a keyless probe,
-  and that still proves the process is alive. (An earlier version required `2xx`
-  and therefore concluded the gateway was permanently down.)
-- **The spawned process is detached**, so it outlives DSH. If you already keep
-  the gateway alive some other way — a service manager, a scheduled task — leave
-  `gatewayAutoStart` off; this is a safety net, not a supervisor.
-
-### Where the browser fits (and why this plugin does not manage it)
-
-Some gateways renew their session cookie by reading it out of a browser over CDP.
-An earlier version of this plugin managed that browser — starting it, keeping it
-alive to hold the debug port open. That was the wrong place for it, and the wrong
-shape.
-
-**The gateway owns its cookies**, and the clean way to read them is a
-**short-lived headless instance**: launch a windowless browser with the debug
-port, read the cookies, kill it immediately. Measured on that path — no visible
-window at any stage, a valid token on the first try, and no resident process
-afterwards.
-
-The reason it has to be short-lived is worth stating, because it is not obvious:
-a resident headless instance holds the profile lock, so when the user later opens
-their browser normally it hands off to that invisible instance and **nothing
-appears on screen**. An ephemeral instance reduces prolonged profile locking but still occupies the
-profile while acquiring cookies. A normal running browser without CDP makes the
-read skip and the old cookie remain in use. A pre-existing user window survived
-testing; ownership races involving a user launch during acquisition remain
-insufficiently tested. See [Setup](SETUP.md#cookie-renewal-the-one-case-that-needs-you).
-
-The plugin owns child-preset mounting, on-demand gateway startup and delegation
-guidance; cookie acquisition belongs to the gateway.
-
-`ensureGateway` and `pingGateway` are exported for use in your own tooling:
-
-```js
-import { ensureGateway } from 'dsh-tabbit-brain'
-
-const result = await ensureGateway({ gatewayAutoStart: true, gatewayUrl: '…', gatewayStartCommand: '…' })
-// -> { ok: true, action: 'started' | 'already-running' | 'cached' }
-```
-
----
-
-## What ships with the plugin, and what you create
-
-A note on how the guidance reaches your agent — because "copy this into your
-`AGENTS.md`" does not scale to other people's installs.
-
-**The behavioural guidance ships inside the plugin.** It registers a system
-prompt section (`plugin:tabbit-brain-guidance`) that does two things:
-
-1. **Teaches the agent to decompose before starting.** Split the request, sort each
-   part by whether it needs hands, then start the reasoning half in the background
-   *while* doing the hands half yourself. This is a workflow, not a description —
-   see the note below on why that distinction is the whole point.
-2. **Positions the delegated model accurately** — peer in reasoning, no hands, no
-   memory, and crucially that a reply is a *claim* to be checked rather than a fact.
-
-It ships with six guardrails, because guidance that only says "delegate more"
-produces more waste than it saves: an independence test, never delegate
-verification, a minimum useful size, output is a draft you own, don't parallelise
-work that can conflict, and the workspace boundary.
-
-Set `delegationStyle` to change it: `off`, `standard` (default), or `aggressive`.
-
-> **Why a workflow rather than a description.** The first version of this section
-> only described the model. Measured over hours of real work, that produced nine
-> delegations — all nine availability probes, none of them actual work. The
-> capability was present and unused. A description is permission; it does not
-> create the impulse. So the section now instructs, and the instruction is
-> observed in controlled composite tasks; persistent autonomous use on ordinary
-> tasks is not yet established.
-
-The mounted plugin supplies guidance when `delegationStyle` is not `off`.
-Reload the plugin to register a changed prompt section. Currently this section
-reads the deployment baseline; user-settings hot reload is not wired into it.
-
-**Your `AGENTS.md` stays yours.** Use it for what is specific to your machine:
-paths, ports, which models you standardised on, local quirks. That is the split
-the plugin is built around — a plugin can only carry what is true everywhere,
-and a user's own instructions file is the right place for everything else.
-
-**The companion preset must be created in user state.** Use the setup assistant
-or create it manually from the template in
-[The companion preset](#the-companion-preset) once per machine.
-
-| Piece | Ships with the plugin? | Where it lives |
-|---|---|---|
-| Subagent provider and gateway management (tool wiring needs main-preset configuration) | yes | the package |
-| Delegation guidance (prompt section) | yes | injected at load |
-| Settings section (`tabbit-brain`) | yes | the package |
-| **The child preset** | **no** | `~/.dsh/.agent-presets/<id>/` |
-| Machine-specific notes | no — and shouldn't | your `AGENTS.md` |
-
-## Verifying it works
-
-After installing, delegate once and confirm the child session recorded the
-preset you expect:
-
-```bash
-python tools/verify_tabbit_brain.py
-```
-
-It checks three things: the plugin loaded, the settings section registered, and
-the most recent subagent sessions were composed on your preset rather than the
-parent's.
-
----
-
-## Caveats
-
-- **One-shot only.** `prepareContinuable()` resolves to `{}`; this provider does
-  not implement continuable children.
-- **`providerName` is fixed at construction.** The `subagents` registry keys
-  providers by name, so renaming requires reloading the plugin.
-- **No `outputSchema` capability.** Structured-output children are not supported.
-- **The child is not sandboxed from *reading* — it simply has no tools.** The
-  isolation here is about prompt composition, not permissions.
-- **Peer dependency on internal DSH packages.** This plugin composes against
-  `@deepseek-ai/dsh-subagent`, `dsh-agent`, `dsh-session`, `dsh-llm`, and
-  `dsh-agent-presets`. Those are not a stable public API; a DSH upgrade may
-  require changes here. Each usage is annotated with where it was verified in
-  DSH's source.
-
----
+- Cookie acquisition belongs to the gateway. A normal running Tabbit without CDP causes acquisition to skip; valid old cookies remain usable. See SETUP for explicit recovery.
+- The gateway may reuse a remote Tabbit chat session. Local history isolation does not prove remote backend context isolation; concurrent remote chat safety is not established.
+- This version's HTTP fixture and tool-adapter tests pass. The new host tools require a DSH restart and a fresh main-session test before runtime integration can be declared complete.
+- Windows gateway only. Browser PID-difference cleanup retains a known user-launch race; do not open Tabbit while headless acquisition is in progress.
 
 ## Development
 
-Plain ESM, no build step. `lib/index.js` is the artifact.
-
-```bash
-npm run check     # node --check lib/index.js
-```
-
-For a local plugin directory to resolve `@deepseek-ai/*`, point its
-`node_modules` at your DSH installation (junction on Windows, symlink
-elsewhere).
-
-`tools/` **is** part of the published package — it holds scripts you can run:
-
-| Script | Purpose |
-|---|---|
-| `scan-secrets.mjs` | pre-release credential/path scan (`npm run scan`) |
-| `audit-deadcode.mjs` | unused exports, orphan files, stray debug output |
-| `verify_tabbit_brain.py` | three-step self-check after a DSH restart |
-| `test_plugin_chain.mjs` | cold-start end-to-end check |
-| `test_gateway_autostart.mjs` | gateway start-on-demand check |
-| `settings_live_test.py` | settings hot-reload check |
-
----
+`npm run check`, `npm run test:brain`, `npm run scan`, `npm run audit:docs`; setup fixture tests: `python tools/test-setup.py` (requires PyYAML). Read the current code for exact host contracts. No UI panel or autonomous agent loop is implemented.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Upstream gateway code has separate provenance; an overlay of upstream-derived files is not automatically exempt from upstream licensing requirements. Public redistribution permissions remain unresolved.

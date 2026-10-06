@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-06
+
+### Changed
+
+- Replaced the DSH child-agent integration with a **plugin-owned private Brain
+  service**. Main agents now call `tabbit_brain` for text-only reasoning; the
+  plugin sends a direct OpenAI-compatible request to the loopback gateway and
+  does not create a DSH child agent, inherit tools, mount a child preset, or
+  share the main conversation history.
+- Background calls use DSH jobs and return job IDs; collect with `job_output`.
+  Conversation history is keyed by main session plus label, same-label calls are
+  serialized, failed turns are not stored, and `tabbit_brain_reset` clears idle
+  history.
+- The installed host entry is global for ordinary main agents; child agents are
+  excluded. `router-standard` still needs its normal `phase_begin` startup gate.
+
+### Added
+
+- `lib/brain-service.js`, `lib/brain-tool.js` and regression tests for direct HTTP,
+  no-tool requests, owner isolation, queueing, failure rollback, budgets,
+  cancellation and reset.
+
+### Known boundary
+
+- The migration has passed unit and tool-adapter fixtures, but it still requires
+  a fresh DSH session test proving the host tool is visible and a real gateway
+  request carries the receipt model/endpoint. Remote Tabbit chat-session
+  isolation is not proved by local history isolation.
+- The current gateway overlay still contains upstream-derived source files;
+  publishing an installer does not resolve upstream licensing. Obtain permission
+  or a licence from upstream before public redistribution.
+
 ## [0.11.1] - 2026-10-06
 
 ### Fixed
@@ -493,7 +525,8 @@ The provider was built to fix a measured problem. On the same delegation task:
 | child session size | — | 51 KB vs 5.1 MB parent |
 | model outcome | "there is no task in this message" | complete, correct deliverable |
 
-[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/wbdxy/dsh-tabbit-brain/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.12.0
 [0.11.1]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.11.1
 [0.11.0]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.11.0
 [0.10.2]: https://github.com/wbdxy/dsh-tabbit-brain/releases/tag/v0.10.2
