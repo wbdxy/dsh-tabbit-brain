@@ -276,11 +276,14 @@ afterwards.
 The reason it has to be short-lived is worth stating, because it is not obvious:
 a resident headless instance holds the profile lock, so when the user later opens
 their browser normally it hands off to that invisible instance and **nothing
-appears on screen**. An ephemeral instance never gets in the way — and as a bonus
-there is no launch race with other plugins that also drive the browser.
+appears on screen**. An ephemeral instance reduces prolonged profile locking but still occupies the
+profile while acquiring cookies. A normal running browser without CDP makes the
+read skip and the old cookie remain in use. A pre-existing user window survived
+testing; ownership races involving a user launch during acquisition remain
+insufficiently tested. See [Setup](SETUP.md#cookie-renewal-the-one-case-that-needs-you).
 
-So this plugin does exactly one thing: **keep the gateway available.** If you want
-the cookie behaviour, it lives on the gateway side.
+The plugin owns child-preset mounting, on-demand gateway startup and delegation
+guidance; cookie acquisition belongs to the gateway.
 
 `ensureGateway` and `pingGateway` are exported for use in your own tooling:
 
@@ -320,24 +323,25 @@ Set `delegationStyle` to change it: `off`, `standard` (default), or `aggressive`
 > delegations — all nine availability probes, none of them actual work. The
 > capability was present and unused. A description is permission; it does not
 > create the impulse. So the section now instructs, and the instruction is
-> verified rather than assumed.
+> observed in controlled composite tasks; persistent autonomous use on ordinary
+> tasks is not yet established.
 
-Every session of every install gets it automatically. You do not write anything
-into `AGENTS.md`, and nothing breaks if you never touch that file.
+The mounted plugin supplies guidance when `delegationStyle` is not `off`.
+Reload the plugin to register a changed prompt section. Currently this section
+reads the deployment baseline; user-settings hot reload is not wired into it.
 
 **Your `AGENTS.md` stays yours.** Use it for what is specific to your machine:
 paths, ports, which models you standardised on, local quirks. That is the split
 the plugin is built around — a plugin can only carry what is true everywhere,
 and a user's own instructions file is the right place for everything else.
 
-**One thing you do create by hand: the companion preset.** A preset lives in
-`~/.dsh/.agent-presets/`, which is user state, not package content — so it cannot
-ride along in the tarball. Copy the template from
+**The companion preset must be created in user state.** Use the setup assistant
+or create it manually from the template in
 [The companion preset](#the-companion-preset) once per machine.
 
 | Piece | Ships with the plugin? | Where it lives |
 |---|---|---|
-| Provider, tool wiring, gateway/browser management | yes | the package |
+| Subagent provider and gateway management (tool wiring needs main-preset configuration) | yes | the package |
 | Delegation guidance (prompt section) | yes | injected at load |
 | Settings section (`tabbit-brain`) | yes | the package |
 | **The child preset** | **no** | `~/.dsh/.agent-presets/<id>/` |

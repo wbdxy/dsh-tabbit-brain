@@ -188,134 +188,84 @@ dsh plugin --profile <你的profile> add dsh-tabbit-brain
 
 ---
 
----
+## 一键助手：先预览，再执行
 
-## 一键助手：把手工编辑变成命令
+在插件目录运行；先安装包依赖。`--models` 必填，使用网关 `/v1/models` 返回的实际 id。
+把 `<MAIN_PRESET>` 换成已有主对话预设 id，把 `<MODEL_IDS>` 换成逗号分隔的模型 id。
+`DSH_HOME` 环境变量可覆盖默认的 `~/.dsh`。
 
-下面第 3、4、5 步本来要你手工编辑 YAML。本插件带了一个脚本代替它们：
-
-```bash
-cd <插件目录>
-node scripts/setup.mjs --help         # 看全部参数；★ 标出必须你自己填的
-node scripts/setup.mjs --dry-run      # 先看会改什么，不动任何文件（建议第一次这样跑）
+```powershell
+npm install --ignore-scripts --legacy-peer-deps
+node scripts/setup.mjs --help
+node scripts/setup.mjs --models "<MODEL_IDS>" --mount-preset "<MAIN_PRESET>" --write-settings --dry-run
+node scripts/setup.mjs --models "<MODEL_IDS>" --mount-preset "<MAIN_PRESET>" --write-settings
 ```
 
-### 你必须自己填的值
+| 参数 | 作用与省略行为 |
+|---|---|
+| `--models <id,id>` | 必填；缺失时退出，不自动读取模型列表 |
+| `--mount-preset <id>` | 已有主预设；省略则读 `agent-presets.default`，缺失或文件不存在时退出 |
+| `--api-key <key>` | 与网关 `API_KEY` 一致；默认 `sk-tabbit-local`。命令行参数可能出现在本机进程列表和 shell 历史中 |
+| `--base-url <url>` | LLM 接口地址；默认 `http://127.0.0.1:8787/v1` |
+| `--provider <name>` | LLM 路由名，默认 `tabbit-local`；不是子代理 provider 名 `tabbit` |
+| `--preset-id <id>` | 子预设目录名，默认 `tabbit-brain`；自定义时也要修改插件的 `presetId` |
+| `--profile <name>` | 用于检查 profile 是否存在；脚本本身不安装插件 |
+| `--dry-run` | 预览所有写入；不创建文件、目录或备份 |
+| `--write-settings` | 允许写 settings；省略它仍会创建子预设并修改主预设，只有 `--dry-run` 才是完全只读 |
+| `--force` | 覆盖目标 LLM provider 和子预设；主预设已存在的工具行仍保留 |
 
-| 参数 | 从哪来 | 不填会怎样 |
-|---|---|---|
-| ★ `--api-key <key>` | **你自己在网关 `.env` 里设的 `API_KEY`** | 用默认 `sk-tabbit-local`；与网关不一致则全部 401 |
-| ★ `--models <id,id>` | `curl <网关>/v1/models -H "Authorization: Bearer <key>"` | 脚本会打印取模型的命令，但不写入 |
-| ★ `--mount-preset <name>` | 你**主对话用的预设**名（如 `router-standard`） | 会尝试从 `settings.yaml` 推断，推不出就只打印片段 |
-| `--profile <name>` | `~/.dsh/profiles/` 下的目录名 | 默认 `desktop` |
-| `--base-url <url>` | 网关地址 | 默认 `http://127.0.0.1:8787/v1` |
-| `--preset-id <id>` | 子代理挂载的预设 id | 默认 `tabbit-brain`，一般不用改 |
-| `--provider <name>` | provider 注册名 | 默认 `tabbit-local` |
-
-### 常用组合
-
-```bash
-# 只打印要加的内容，不改任何文件（默认行为）
-node scripts/setup.mjs --models DeepSeek-V4.1-Flash,GLM-5.3
-
-# 真正写入（会先备份成 .bak-setup-*）
-node scripts/setup.mjs --models DeepSeek-V4.1-Flash,GLM-5.3 --write-settings --mount-preset router-standard
-```
-
-**脚本的边界**：只做加法和备份。已存在的条目**跳过而不是覆盖**（要覆盖加 `--force`），
-改动前一律先备份，找不到的地方明确告诉你还差什么。
-
----
+脚本先解析 settings 和主预设 YAML，再进行写入。损坏 YAML 或错误类型会在写入前退出。
+写入前备份已有文件；配置值会保留，但 settings 的注释与排版可能变化。
+多文件写入不是事务：权限或磁盘故障时可能只有部分文件写入，需检查输出及 `.bak-setup-*`。
 
 ## 步骤 3：注册 provider
 
-**用上面的助手**（推荐）：
+上面的执行命令写入 `llm-pi-ai.providers.tabbit-local`。它和子代理 provider `tabbit`
+是两个不同名称。自定义 `--provider` 后，还要在插件设置中把 `agentProvider` 改成同一值。
+将 `agentModel` 设为 `/v1/models` 返回的实际模型 id。
 
-```bash
-node scripts/setup.mjs --models <你的模型id> --write-settings
-```
-
-**或者手工写**。编辑 `~/.dsh/settings.yaml`：
-
-```yaml
-llm-pi-ai:
-  providers:
-    tabbit-local:                    # ← 改成你想用的 provider 名
-      displayName: Tabbit 本地网关
-      apiKeyEnv: TABBIT_API_KEY
-      baseURL: http://127.0.0.1:8787/v1   # ← 你的网关地址
-      models:
-        - id: DeepSeek-V4.1-Flash    # ← 换成你账号里实际有的
-          inputModalities: [text, image]
-        - id: GLM-5.3                # ← 同上
-          inputModalities: [text, image]
-```
-
-拿到你的模型列表：
-
-```bash
-curl http://127.0.0.1:8787/v1/models -H "Authorization: Bearer <你的key>"
-```
-
-设 API key 环境变量（**值必须与网关 `.env` 的 `API_KEY` 一致**）：
+在 PowerShell 中保存网关 API key，避免把它直接粘贴进命令历史：
 
 ```powershell
-[Environment]::SetEnvironmentVariable('TABBIT_API_KEY', '<你的key>', 'User')
+$key = Read-Host 'Gateway API key' -AsSecureString
+$plain = [System.Net.NetworkCredential]::new('', $key).Password
+[Environment]::SetEnvironmentVariable('TABBIT_API_KEY', $plain, 'User')
+$env:TABBIT_API_KEY = $plain
+Remove-Variable plain, key
 ```
 
----
+这个值必须与网关 `.env` 的 `API_KEY` 相同。重启 DSH 后进程才会继承新用户环境变量。
 
 ## 步骤 4：创建子代理预设
 
-**用助手**（推荐）：
-
-```bash
-node scripts/setup.mjs     # 会自动创建 ~/.dsh/.agent-presets/<presetId>/
-```
-
-**或者手工建两个文件**（内容见下）。预设住在 `~/.dsh/.agent-presets/`，
-那是**用户状态**、不是包内容，所以**没法随插件分发**——每个用户都要做一次。
-
----
+执行助手同时创建 `preset.yml` 和 `agent.cordis.yml`。
+已有子预设默认保留；模板的 `complete: true` 与无工具配置见
+[README 配套预设](README.zh.md#配套预设)。预设可以作为模板随包分发，
+但本插件当前要求助手把模板写入用户目录，或由用户手工创建。
 
 ## 步骤 5：挂载委派工具
 
-**用助手**（推荐）：
-
-```bash
-node scripts/setup.mjs --mount-preset <你主对话用的预设名>
-```
-
-**或者手工**在你主对话用的预设里加一行（见下方 YAML）。
-
----
+执行助手向已有主预设的 YAML 序列追加 `tool-subagent-tabbit`；存在同 id 时保留。
+工具配置固定为 `provider: tabbit`、`toolName: subagent_tabbit`、`backgroundMode: continuable`。
+插件 `providerName` 应保持 `tabbit`；改名时需手工同步该工具行。
+脚本不会把工具插入已有的嵌套 delegation 分组。
 
 ## 步骤 6：验证
 
-
-编辑 `~/.dsh/settings.yaml`，加一个 OpenAI 兼容 provider：
-
-```yaml
-llm-pi-ai:
-  providers:
-    tabbit-local:
-      displayName: Tabbit 本地网关
-      apiKeyEnv: TABBIT_API_KEY
-      baseURL: http://127.0.0.1:8787/v1
-      models:
-        - id: DeepSeek-V4.1-Flash
-          inputModalities: [text, image]
-        - id: GLM-5.3
-          inputModalities: [text, image]
+```powershell
+$env:TABBIT_API_KEY = [Environment]::GetEnvironmentVariable('TABBIT_API_KEY', 'User')
+Invoke-RestMethod 'http://127.0.0.1:8787/healthz' -Headers @{Authorization="Bearer $env:TABBIT_API_KEY"}
+Invoke-RestMethod 'http://127.0.0.1:8787/v1/models' -Headers @{Authorization="Bearer $env:TABBIT_API_KEY"}
 ```
 
-> **模型名要填你账号里实际有的**。跑 `curl http://127.0.0.1:8787/v1/models -H "Authorization: Bearer sk-tabbit-local"`
-> 看列表，把这里换成其中的 id。不同账号/地区的可用模型不一样。
-
-设置 API key 环境变量（值与网关 `.env` 的 `API_KEY` 一致）：
+网关健康请求应返回 `ok: true`，模型列表应包含 `agentModel`。
+然后重启 DSH，在主对话请求一次实际委派，确认有模型回答，且子会话记录目标预设。
+诊断关闭时没有 `trace.log` 是正常现象，不能据此判定插件未加载。
+安装助手的隔离回归测试需要 Python 和 PyYAML：
 
 ```powershell
-[Environment]::SetEnvironmentVariable('TABBIT_API_KEY', 'sk-tabbit-local', 'User')
+python -m pip install PyYAML
+python tools/test-setup.py
 ```
 
 ---
@@ -328,19 +278,26 @@ llm-pi-ai:
 
 | 那一刻的状态 | 结果 |
 |---|---|
-| **Tabbit 没开** | ✅ 网关自己起一个无窗口实例取 cookie，取完杀掉，你无感 |
+| **Tabbit 没开且已有有效登录态** | 网关尝试短命 headless 读取，再清理实例 |
 | **Tabbit 开着、用调试端口启动的** | ✅ 直接从它读，你无感 |
 | **Tabbit 开着、普通方式启动的** | ⚠️ **跳过这次续期**，沿用已有 cookie |
 
-### 三条规则
+### 恢复方法与边界
 
-> 1. **不开 Tabbit** → 续期永远正常，你什么都不用管。
-> 2. **开了 Tabbit（普通方式）** → 那一刻续期跳过，但**沿用旧 cookie**，通常无感。
-> 3. **需要你动手的唯一场景**：cookie 已过期 **且** 你正开着 Tabbit。
->    → **完全退出 Tabbit**（任务管理器确认无残留），下一次续期会自动成功。
+读取 cookie 不是账号注册或重新登录，也不保证服务端恢复已失效的 token。
+Tabbit 没开、路径正确、profile 已登录时可以尝试自动读取；缺少登录态、端口冲突等也会失败。
+普通 Tabbit 正在运行且没有 CDP 时，本次读取跳过，旧 cookie 仍有效则继续调用。
+若鉴权失败：先在 Tabbit 重新登录（如需要），保存工作并完全退出，然后重试委派；
+也可以明确触发读取，避免等待定时周期：
 
-**为什么第 3 种不能自动处理**：Chromium 单实例——再起一个实例会被转交给已有的那个，
-调试端口永远不出现。要自动处理就得**先关掉你的浏览器**，那比等一次续期更糟。
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8787/admin/refresh-cookie' -Method Post -Headers @{Authorization="Bearer $env:TABBIT_API_KEY"}
+```
+
+当前管理端点在读取失败后也可能返回沿用旧 cookie 的 `ok: true`；应核对
+`lastCookieRefresh` 是否更新并重试模型请求。不要仅用 `ok` 判断登录态有效。
+清理当前使用启动前后 PID 差集，已验证启动前存在的用户窗口被保留；
+用户在 headless 读取期间新开实例的竞态仍未充分验证。读取期间先不要手动启动 Tabbit。
 
 ---
 

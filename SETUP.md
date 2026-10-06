@@ -203,138 +203,91 @@ dsh plugin --profile <your-profile> add dsh-tabbit-brain
 
 ---
 
----
+## Setup assistant: preview, then apply
 
-## Setup assistant: turn file editing into commands
+Run in the plugin directory after installing package dependencies. `--models` is
+required; use actual ids returned by the gateway's `/v1/models`.
+Replace `<MAIN_PRESET>` with an existing main preset id and `<MODEL_IDS>` with
+comma-separated model ids. `DSH_HOME` overrides the default `~/.dsh`.
 
-Steps 3, 4 and 5 below otherwise mean hand-editing YAML. The plugin ships a
-script that does them instead:
-
-```bash
-cd <plugin-dir>
-node scripts/setup.mjs --help         # all options; ★ marks the ones only you can fill
-node scripts/setup.mjs --dry-run      # show what it would change, touch nothing
+```powershell
+npm install --ignore-scripts --legacy-peer-deps
+node scripts/setup.mjs --help
+node scripts/setup.mjs --models "<MODEL_IDS>" --mount-preset "<MAIN_PRESET>" --write-settings --dry-run
+node scripts/setup.mjs --models "<MODEL_IDS>" --mount-preset "<MAIN_PRESET>" --write-settings
 ```
 
-### Values only you can provide
+| Option | Purpose and omission behaviour |
+|---|---|
+| `--models <id,id>` | Required; missing values stop setup. No automatic model discovery |
+| `--mount-preset <id>` | Existing main preset; defaults to `agent-presets.default`. Missing id/file stops setup |
+| `--api-key <key>` | Must match gateway `API_KEY`; default `sk-tabbit-local`. Arguments may appear in local process listings and shell history |
+| `--base-url <url>` | LLM endpoint; default `http://127.0.0.1:8787/v1` |
+| `--provider <name>` | LLM route name, default `tabbit-local`; distinct from subagent provider `tabbit` |
+| `--preset-id <id>` | Child preset directory, default `tabbit-brain`; custom ids also require changing plugin `presetId` |
+| `--profile <name>` | Checks profile existence; this script does not install the plugin |
+| `--dry-run` | Previews every write; creates no files, directories or backups |
+| `--write-settings` | Enables settings writes. Without it, child preset creation and main preset edits still happen; only `--dry-run` is fully read-only |
+| `--force` | Replaces target LLM provider and child preset; an existing tool row in the main preset is preserved |
 
-| Option | Where it comes from | If omitted |
-|---|---|---|
-| ★ `--api-key <key>` | **the `API_KEY` you set in the gateway `.env`** | falls back to `sk-tabbit-local`; a mismatch means everything 401s |
-| ★ `--models <id,id>` | `curl <gateway>/v1/models -H "Authorization: Bearer <key>"` | the script prints the command instead of writing |
-| ★ `--mount-preset <name>` | the preset your **main conversation** uses (e.g. `router-standard`) | it tries to infer it from `settings.yaml`, otherwise prints the snippet |
-| `--profile <name>` | a directory under `~/.dsh/profiles/` | defaults to `desktop` |
-| `--base-url <url>` | your gateway address | defaults to `http://127.0.0.1:8787/v1` |
-| `--preset-id <id>` | the preset the child mounts | defaults to `tabbit-brain` |
-| `--provider <name>` | provider registration name | defaults to `tabbit-local` |
-
-### Common invocations
-
-```bash
-# print what would be added, change nothing (the default)
-node scripts/setup.mjs --models DeepSeek-V4.1-Flash,GLM-5.3
-
-# actually write (backs up to .bak-setup-* first)
-node scripts/setup.mjs --models DeepSeek-V4.1-Flash,GLM-5.3 --write-settings --mount-preset router-standard
-```
-
-**What the script will not do**: it only adds and backs up. Existing entries are
-**skipped, not overwritten** (use `--force` to override), every write is preceded
-by a backup, and anything it cannot find it reports rather than guesses.
-
----
+Setup parses settings and main-preset YAML before writing. Invalid YAML or mapping
+types stop it before the first write. Existing files are backed up; values are
+preserved, but settings comments and formatting may change. Multiple file writes
+are not transactional: disk/permission failures can leave partial changes.
+Check output and `.bak-setup-*` files before retrying.
 
 ## Step 3: register the provider
 
-**With the assistant** (recommended):
+The apply command writes `llm-pi-ai.providers.tabbit-local`. This LLM route and
+subagent provider `tabbit` are different names. A custom `--provider` also requires
+changing the plugin's `agentProvider`. Set `agentModel` to an actual model id.
 
-```bash
-node scripts/setup.mjs --models <your-model-ids> --write-settings
-```
-
-**Or by hand.** Edit `~/.dsh/settings.yaml`:
-
-```yaml
-llm-pi-ai:
-  providers:
-    tabbit-local:                    # <- your chosen provider name
-      displayName: Tabbit local gateway
-      apiKeyEnv: TABBIT_API_KEY
-      baseURL: http://127.0.0.1:8787/v1   # <- your gateway address
-      models:
-        - id: DeepSeek-V4.1-Flash    # <- ids your account actually has
-          inputModalities: [text, image]
-        - id: GLM-5.3                # <- same
-          inputModalities: [text, image]
-```
-
-List what your account offers:
-
-```bash
-curl http://127.0.0.1:8787/v1/models -H "Authorization: Bearer <your-key>"
-```
-
-Set the API key environment variable (**must equal `API_KEY` in the gateway `.env`**):
+Store the gateway API key in PowerShell without pasting it into command history:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('TABBIT_API_KEY', '<your-key>', 'User')
+$key = Read-Host 'Gateway API key' -AsSecureString
+$plain = [System.Net.NetworkCredential]::new('', $key).Password
+[Environment]::SetEnvironmentVariable('TABBIT_API_KEY', $plain, 'User')
+$env:TABBIT_API_KEY = $plain
+Remove-Variable plain, key
 ```
 
----
+The value must equal gateway `.env` `API_KEY`. Restart DSH to inherit the new user
+environment variable.
 
 ## Step 4: create the child preset
 
-**With the assistant** (recommended):
-
-```bash
-node scripts/setup.mjs     # creates ~/.dsh/.agent-presets/<presetId>/
-```
-
-**Or create the two files by hand** (contents below). Presets live in
-`~/.dsh/.agent-presets/`, which is **user state, not package content** — they
-cannot ship with the plugin, so every user creates them once.
-
----
+The apply command creates `preset.yml` and `agent.cordis.yml`. Existing child
+presets are preserved by default. The `complete: true`, no-tool template is in
+[The companion preset](README.md#the-companion-preset). Templates can ship in a
+package; this plugin currently creates user-state files through the assistant or
+requires manual creation.
 
 ## Step 5: mount the delegation tool
 
-**With the assistant** (recommended):
-
-```bash
-node scripts/setup.mjs --mount-preset <the-preset-your-main-chat-uses>
-```
-
-**Or add the line by hand** (YAML below).
-
----
+The assistant appends `tool-subagent-tabbit` to the existing main preset sequence;
+an existing row with that id is preserved. Its configuration uses `provider: tabbit`,
+`toolName: subagent_tabbit`, and `backgroundMode: continuable`. Keep plugin
+`providerName` as `tabbit`, or manually update the tool row too. The script does
+not insert into an existing nested delegation group.
 
 ## Step 6: verify
 
-
-Edit `~/.dsh/settings.yaml` and add an OpenAI-compatible provider:
-
-```yaml
-llm-pi-ai:
-  providers:
-    tabbit-local:
-      displayName: Tabbit local gateway
-      apiKeyEnv: TABBIT_API_KEY
-      baseURL: http://127.0.0.1:8787/v1
-      models:
-        - id: DeepSeek-V4.1-Flash
-          inputModalities: [text, image]
-        - id: GLM-5.3
-          inputModalities: [text, image]
+```powershell
+$env:TABBIT_API_KEY = [Environment]::GetEnvironmentVariable('TABBIT_API_KEY', 'User')
+Invoke-RestMethod 'http://127.0.0.1:8787/healthz' -Headers @{Authorization="Bearer $env:TABBIT_API_KEY"}
+Invoke-RestMethod 'http://127.0.0.1:8787/v1/models' -Headers @{Authorization="Bearer $env:TABBIT_API_KEY"}
 ```
 
-> **Use the model ids your account actually has.** Run
-> `curl http://127.0.0.1:8787/v1/models -H "Authorization: Bearer sk-tabbit-local"`
-> and put those ids here. Availability differs by account and region.
-
-Set the API key environment variable (same value as `API_KEY` in the gateway `.env`):
+Health should return `ok: true`; the model list should include `agentModel`.
+Restart DSH and request a real delegation. Confirm a model answer and the expected
+preset in the child session. With diagnostics off, absent `trace.log` is normal
+and does not prove the plugin failed to load. Isolated setup regression tests
+require Python and PyYAML:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('TABBIT_API_KEY', 'sk-tabbit-local', 'User')
+python -m pip install PyYAML
+python tools/test-setup.py
 ```
 
 ---
@@ -348,23 +301,29 @@ gateway start, every 6 hours, and on any auth error).
 
 | State at that moment | Result |
 |---|---|
-| **Tabbit not running** | ✅ the gateway starts a windowless instance, reads the cookie, kills it. You notice nothing |
+| **Tabbit not running, valid login present** | Gateway attempts an ephemeral headless read and cleanup |
 | **Tabbit running, started with the debug port** | ✅ read straight from it. You notice nothing |
 | **Tabbit running, started normally** | ⚠️ **this renewal is skipped**; the existing cookie is reused |
 
-### The three rules
+### Recovery and limits
 
-> 1. **Tabbit not open** -> renewal always works; nothing for you to do.
-> 2. **Tabbit open (normal launch)** -> that renewal is skipped, but the existing
->    cookie is reused, so it is usually unnoticeable.
-> 3. **The only case that needs you**: the cookie has actually expired **and** you
->    have Tabbit open. -> **Quit Tabbit completely** (confirm no leftover process),
->    and the next renewal succeeds on its own.
+Reading cookies does not register an account or sign in again, and cannot guarantee
+recovery of a server-invalidated token. Browser absence, valid paths and a signed-in
+profile permit an automatic read attempt; missing login or port conflicts can still
+fail. A normal running browser without CDP makes the read skip; valid old cookies
+remain usable. On authentication failure, sign in again if needed, save your work,
+quit Tabbit completely, and retry delegation. You can explicitly trigger a read:
 
-**Why case 3 cannot be automatic**: Chromium is single-instance — another instance
-is handed off to the running one and the debug port never appears. Handling it
-automatically would mean **closing your browser**, which is worse than waiting one
-renewal cycle.
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8787/admin/refresh-cookie' -Method Post -Headers @{Authorization="Bearer $env:TABBIT_API_KEY"}
+```
+
+This admin endpoint may return `ok: true` while retaining an old cookie after a
+failed read. Check whether `lastCookieRefresh` changed and retry a model request;
+`ok` alone does not prove the login is valid. Cleanup currently uses a before/after
+PID difference; preservation of a pre-existing window was tested, but a user
+launching another instance during the read remains insufficiently tested. Avoid
+manually launching Tabbit while headless acquisition is in progress.
 
 ---
 
