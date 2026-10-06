@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BrainService } from '../lib/brain-service.js';
 const requests=[];
 const server=createServer(async(req,res)=>{
@@ -10,7 +13,8 @@ const server=createServer(async(req,res)=>{
  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({model:'TEST_MODEL',choices:[{message:{content:'answer'}}]}));
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
-const service=new BrainService();
+const root=await mkdtemp(join(tmpdir(),'tabbit-brain-service-'));
+const service=new BrainService({dbPath:join(root,'brain.sqlite')});
 const opts={gatewayUrl:`http://127.0.0.1:${server.address().port}`,agentModel:'TEST_MODEL',apiKey:'fixture-only',requestTimeoutMs:2000,contextBudgetChars:1800};
 try {
  const call=(owner,prompt,extra={})=>service.ask({owner,prompt,conversation:'design',...extra},opts);
@@ -26,4 +30,4 @@ try {
  const ctrl=new AbortController();ctrl.abort();await assert.rejects(call('A','cancel',{signal:ctrl.signal}));
  service.reset('A','design');await call('A','reset');assert.equal(requests.at(-1).messages.length,2);
  console.log('PASS: direct HTTP, no tools, owner isolation, history, queue, failure rollback, budget, abort, reset');
-} finally {service.dispose();server.closeAllConnections();await new Promise(r=>server.close(r));}
+} finally {service.dispose();server.closeAllConnections();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});}

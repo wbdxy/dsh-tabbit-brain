@@ -43,3 +43,6 @@ _*.js
 _*.mjs
 _*.json
 _*.py
+
+# Brain runtime state (local conversation history and jobs)
+state/
