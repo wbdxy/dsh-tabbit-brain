@@ -47,6 +47,106 @@ const SKIP_PATH_PREFIX = ['scripts/lib/', 'src/', 'tabbit-toy/', 'lib/trace.log'
 // 对它查"路径是否存在"是范畴错误——那会逼着人把历史改写得不准确。
 const SKIP_PATH_CHECK = new Set(['CHANGELOG.md']);
 
+// Only the direct exported config property can declare this runtime ledger.
+// This bounded scanner treats templates as opaque, including their interpolations.
+function configTokens(source) {
+  let i = 0;
+  function token() {
+    while (i < source.length) {
+      if (/\s/.test(source[i])) { i++; continue; }
+      if (source.startsWith('//', i)) {
+        while (i < source.length && source[i] !== '\n') i++;
+        continue;
+      }
+      if (source.startsWith('/*', i)) {
+        const end = source.indexOf('*/', i + 2);
+        if (end < 0) throw new Error('Unclosed comment');
+        i = end + 2;
+        continue;
+      }
+      break;
+    }
+    if (i === source.length) return null;
+    const c = source[i++];
+    if (c === '"' || c === "'") {
+      const start = i;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i++] === c) return { kind: 'string', value: source.slice(start, i - 1) };
+      }
+      throw new Error('Unclosed string');
+    }
+    if (c === '`') {
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i++] === '`') return { kind: 'template', value: '' };
+        if (source[i - 1] === '$' && source[i] === '{') {
+          i++;
+          let depth = 1;
+          while (depth) {
+            const t = token();
+            if (!t) throw new Error('Unclosed interpolation');
+            if (t.kind === 'code' && t.value === '{') depth++;
+            if (t.kind === 'code' && t.value === '}') depth--;
+          }
+        }
+      }
+      throw new Error('Unclosed template');
+    }
+    if (/[A-Za-z_$]/.test(c)) {
+      const start = i - 1;
+      while (i < source.length && /[\w$]/.test(source[i])) i++;
+      return { kind: 'code', value: source.slice(start, i) };
+    }
+    return { kind: 'code', value: c };
+  }
+  const tokens = [];
+  for (let t; (t = token());) tokens.push(t);
+  return tokens;
+}
+
+function declaresBrainSessionDefault(source) {
+  const tokens = configTokens(source);
+  const expected = configTokens("ENV.TABBIT_BRAIN_SESSION_MAP_PATH || process.env.TABBIT_BRAIN_SESSION_MAP_PATH || join(dirname(fileURLToPath(import.meta.url)), '..', 'state', 'brain-session-map.json')");
+  const isCode = (t, value) => t?.kind === 'code' && t.value === value;
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    if (depth === 0 && ['export', 'const', 'config', '=', '{'].every((v, n) => isCode(tokens[i + n], v))) {
+      let start = i + 5;
+      let nested = 0;
+      let declared = false;
+      let seen = false;
+      for (let j = start; j < tokens.length; j++) {
+        const t = tokens[j];
+        if (nested === 0 && (isCode(t, ',') || isCode(t, '}'))) {
+          const property = tokens.slice(start, j);
+          if (isCode(property[0], '.') || isCode(property[0], '[')) return false;
+          if (property[0]?.value === 'brainSessionStatePath' && property[0].kind !== 'template') {
+            if (seen) return false;
+            seen = true;
+            declared = isCode(property[1], ':') && property.length === expected.length + 2
+              && expected.every((v, n) => v.kind === property[n + 2].kind && v.value === property[n + 2].value);
+          }
+          if (isCode(t, '}')) return declared;
+          start = j + 1;
+        } else if (t.kind === 'code') {
+          if (['{', '(', '['].includes(t.value)) nested++;
+          if (['}', ')', ']'].includes(t.value)) nested--;
+        }
+      }
+      return false;
+    }
+    if (isCode(tokens[i], '{')) depth++;
+    if (isCode(tokens[i], '}')) depth--;
+  }
+  return false;
+}
+
+let hasBrainSessionDefault = false;
+try {
+  hasBrainSessionDefault = declaresBrainSessionDefault(readFileSync(join(ROOT, 'gateway-patch/files/src/config.mjs'), 'utf8'));
+} catch {}
+
 for (const f of docs) {
   const text = readFileSync(join(ROOT, f), 'utf8');
   const dir = dirname(f);
@@ -67,6 +167,7 @@ for (const f of docs) {
     const p = m[1];
     if (SKIP_PATH_CHECK.has(f)) continue;
     if (SKIP_PATH_PREFIX.some((s) => p.startsWith(s))) continue;
+    if (p === 'state/brain-session-map.json' && hasBrainSessionDefault) continue;
     if (!existsSync(join(ROOT, p))) add('ghost-path', f, `\`${p}\` 在仓库里不存在`);
   }
 }

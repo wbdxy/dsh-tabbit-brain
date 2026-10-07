@@ -20,7 +20,9 @@ try {
   assert.equal(store.getConversation('owner-b', a.id), null, 'owner isolation');
   const ordered = store.listMessages('owner-a', a.id, 10, null);
   assert.deepEqual(ordered.map(x => x.role), ['user', 'assistant']);
+  assert.deepEqual(ordered.map(x => x.seq), [1, 2]);
   assert.equal(store.listMessages('owner-a', a.id, 1, null)[0].role, 'assistant');
+  assert.equal(store.listMessages('owner-a', a.id, 1, 2)[0].role, 'user');
   store.setStatus('owner-a', a.id, 'archived');
   assert.equal(store.listConversations('owner-a', false).length, 0);
   assert.equal(store.listConversations('owner-a', true).length, 1);

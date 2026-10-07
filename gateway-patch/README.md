@@ -72,6 +72,46 @@ node gateway-patch/install.mjs --api-key <你自己定的key> --base-url https:/
 
 `browserExe` 与 `browserUserDataDir` 改为自动探测（留空即探测，探测失败可手工指定）。
 
+### 六文件安装清单与状态保留
+
+安装器的 `MANIFEST` 是复制、预检和 `--help` 清单的统一来源：
+
+- `scripts/lib/detect.mjs`
+- `scripts/lib/cdp.mjs`
+- `src/config.mjs`
+- `src/server.mjs`
+- `src/brain-session-map.mjs`：持久化 Brain 会话映射。
+- `src/remote-session-client.mjs`：创建远端会话并检查可见历史。
+
+`src/server.mjs` 继续使用上游客户端的 `sessionId` 参数契约；
+`scripts/lib/tabbit.mjs` 与其默认签名常量由上游提供，不在 overlay 中复制。
+安装只覆盖上述代码，**不启动服务、浏览器或安装依赖**。
+
+源文件预检在任何目标写入和 Git 操作之前执行；缺任一源文件即非零退出。
+`--dry-run` 不创建目录、不写文件、不调用 Git 或网络，输出中的 API key 已脱敏。
+`--skip-clone` 跳过 clone/pull，仅安装 overlay 与配置；没有 Git/网络子进程。
+非空、非 Git 目录需要显式 `--skip-clone`。
+
+已有 `.env` 的凭证、cookie、端口、账号键和状态路径保留，只追加缺项。
+首次覆盖前保存 `*.upstream-bak`；重装保持首次备份，不覆盖成 overlay。
+状态账本、`.tmp`、损坏备份及无关文件保持原样，也不随 overlay 分发。
+
+可在 `.env` 中设置：
+
+| 配置 | 语义 | 默认 |
+|---|---|---|
+| `TABBIT_ACCOUNT_KEY` | 用户显式设置的非秘密账号标签；切换账号时须区分，不是自动身份识别 | `default` |
+| `TABBIT_BRAIN_SESSION_MAP_PATH` | 映射账本路径；自定义值保留 | 网关根目录的 `state/brain-session-map.json` |
+
+配置读取优先使用 `.env` 中的非空值，其次 shell 环境变量，最后默认值。
+默认状态路径用 `fileURLToPath` 解析模块路径，支持 Windows 盘符、中文与空格。
+
+隔离安装器回归（目标与 HOME 均为临时 fixture，不启动网关）：
+
+```bash
+node --test tools/test-gateway-install.mjs
+```
+
 ### 修改 `src/server.mjs`
 
 cookie 刷新逻辑改为两段：

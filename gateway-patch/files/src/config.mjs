@@ -1,6 +1,8 @@
 // src/config.mjs — 配置加载（.env + 环境变量）
 
 import { readFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { detectInstallations, detectUserDataDir } from '../scripts/lib/detect.mjs';
 
 // 每个实例可用独立 env 文件（多版本共存时互不干扰）：
@@ -41,6 +43,8 @@ export const config = {
   // Tabbit Web 后端地址。国际版默认 https://web.tabbit.ai；
   // 国内版改为对应域名（如 https://web.tabbit.com）即可兼容，协议完全一致。
   baseUrl: (ENV.TABBIT_BASE_URL || process.env.TABBIT_BASE_URL || 'https://web.tabbit.ai').replace(/\/$/, ''),
+  accountKey: ENV.TABBIT_ACCOUNT_KEY || process.env.TABBIT_ACCOUNT_KEY || 'default',
+  brainSessionStatePath: ENV.TABBIT_BRAIN_SESSION_MAP_PATH || process.env.TABBIT_BRAIN_SESSION_MAP_PATH || join(dirname(fileURLToPath(import.meta.url)), '..', 'state', 'brain-session-map.json'),
   // 签名 key（留空则自动从 /chat/sign-key 拉取并定期刷新）
   signKey: ENV.TABBIT_SIGN_KEY || process.env.TABBIT_SIGN_KEY || '',
   // HTTP 服务端口

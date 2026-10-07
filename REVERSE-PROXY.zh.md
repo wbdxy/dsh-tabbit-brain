@@ -7,7 +7,7 @@ OpenAI 兼容 API。
 
 > **为什么这份文档必须存在**：整个项目的起点是这一步。网关不是魔法盒子——
 > 它是一组具体的 HTTP 调用加上一套签名头。把这些写清楚，后面所有步骤
-> （装网关、注册 provider、建预设）才有立足点；出了问题也才有地方查。
+> （装网关、配置 Brain 专用提示词）才有立足点；出了问题也才有地方查。
 >
 > 这些知识是**逆向得到的**（参考了上游项目的分析，并用本机抓包与实测核对过）。
 > 我们重新组织并写在这里，作为本项目需要的前置操作之一。
@@ -18,10 +18,10 @@ OpenAI 兼容 API。
 
 ```
 DSH 主对话
-   │  委派（subagent_tabbit）
+   │  私有推理（tabbit_brain）
    ▼
-本插件（dsh-tabbit-brain）       ← 保证网关在跑
-   │  OpenAI 格式请求
+按 owner 隔离的 Brain service  ← 专用提示词与 SQLite 历史
+   │  OpenAI 格式请求 + X-Brain-Conversation-Id
    ▼
 网关（本地，127.0.0.1:8787）      ← 翻译层：OpenAI ⇄ Tabbit
    │  Tabbit 私有格式 + 签名头
@@ -35,7 +35,7 @@ https://web.tabbit.com           ← Tabbit 自有后端（再转发到真实 LL
 **关键点**：网关自己**不产生**任何智能。它只做三件事：
 
 1. 把 OpenAI 的 `messages` 拼成 Tabbit 要的单个 `content` 字符串
-2. 给每个请求签上 Tabbit 后端要验的签名头
+2. 给 chat/models API 请求签上 Tabbit 后端要验的签名头
 3. 把 Tabbit 的 SSE 流翻译回 OpenAI 的 SSE 流
 
 ---
@@ -53,18 +53,25 @@ Tabbit 后端要两样东西，缺一不可。
 
 ### 2.2 签名 Key（第二条腿）
 
-`GET /chat/sign-key` 可以拿到它。上游代码里还内置了一个**默认常量**作为回落值
-（位置：网关源码 `scripts/lib/tabbit.mjs` 的 `DEFAULT_SIGN_KEY`）——
-**我们刻意不在这里写出它的字面值**：它属于 Tabbit，不是我们的东西，
-而且随版本可能变化，写进文档只会制造一个会过期的"事实"。
+approved 网关的 `ensureSignKey` 对显式配置的固定 key 直接使用。
+未固定 key 时，自动获取采用请求驱动的 10 分钟 TTL 刷新；
+这不是后台定时器。`ensureSignKey` 直接等待获取结果；获取失败会传播错误，无 catch 或失败回落。
+上游 client 在 HTTP 响应不成功时抛错；成功响应的空正文才返回 `DEFAULT_SIGN_KEY`。
 
-网关的策略是：**优先用拉取到的**，拉取失败才回落到那个常量；并且每 10 分钟重新拉一次。
+网关初始化也使用这个默认常量。它位于 `scripts/lib/tabbit.mjs`；
+**我们刻意不在这里写出它的字面值**：它属于 Tabbit，随版本可能变化，
+写进文档只会制造一个会过期的事实。
 
 ---
 
 ## 三、请求头：签名怎么算
 
-每个请求要带这些头：
+下表描述签名的 chat/models 请求，不适用于全部上游 HTTP 请求。
+
+- `POST /panel/session` 无 body；它与 `GET /panel/{id}/data` 仅带 `Cookie`、`Accept`、`Origin` 和 `Referer`。
+  两者不带 Content-Type、签名或指纹头；均使用 `redirect: error`。
+- `GET /chat/sign-key` 使用基础请求头，不签名。
+- 预签名 COS 对象存储 `PUT` 不使用这些 Tabbit 签名/指纹头。
 
 | 头 | 值 | 说明 |
 |---|---|---|
@@ -100,7 +107,7 @@ message = `${x-timestamp}.${x-signature}.${sha256Hex(requestBody)}`
 x-nonce = HMAC-SHA256(signKey, message)   → 十六进制小写
 ```
 
-`GET` 类请求（如模型列表）的 body 视为空串，即 `sha256('')`。
+签名的 `GET` 请求（如模型列表）的 body 视为空串，即 `sha256('')`。
 
 > **凭名字猜会写错**。按 `x-signature=签名、x-nonce=随机数` 去实现，后端会直接拒。
 > 这是逆向最容易翻车的地方之一，所以单独拎出来说。
@@ -112,14 +119,18 @@ x-nonce = HMAC-SHA256(signKey, message)   → 十六进制小写
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | `GET` | `/proxy/v1/model_config/models?a=0&scene=chat` | 模型列表（**需要签名**） |
-| `GET` | `/chat/sign-key` | 拉签名 key |
+| `GET` | `/chat/sign-key` | 拉签名 key（不签名） |
+| `POST` | `/panel/session` | 创建空远端会话（无 body；仅会话请求头） |
+| `GET` | `/panel/{id}/data` | 校验会话 ID 匹配且历史为空（仅会话请求头） |
 | `POST` | `/api/v1/chat/completion` | **核心：聊天补全（SSE 流）** |
 | `POST` | `/proxy/v0/chat/stop/` | 停止生成 |
 | `POST` | `/proxy/v0/cos/presigned-upload-url` | 图片上传①：拿预签名地址 |
 | `PUT` | （预签名地址，COS） | 图片上传②：直接传字节 |
 | `POST` | `/api/v0/cos/complete-upload` | 图片上传③：登记 |
 
-> **Agent 模式**（`wss /api/agent/v2/ws`，浏览器自动化）本项目未实现。
+`{id}` 是远端会话 ID 占位符；下文 `GET /panel/id/data` 采用同一占位写法，`id` 不是字面路径段。
+
+> **Agent 模式**：请求桥会把 `agent_mode` 和 `task_name` 转发到上游聊天端点，但本网关没有实现 Tabbit 的浏览器自动化 WebSocket（`wss /api/agent/v2/ws`），也没有用户浏览器控制通道。黑盒测试中观察到 `browser_task_tool` 事件但结果为空，因此浏览器执行仍应视为未验证。模型文字中返回的 `browser_control` 指令不会由本网关继续执行。
 
 ---
 
@@ -144,8 +155,9 @@ x-nonce = HMAC-SHA256(signKey, message)   → 十六进制小写
 
 几个要点：
 
-- **`chat_session_id` 不能是新的**：Tabbit 按会话计费/管理上下文。网关会先
-  `GET` 会话列表拿一个已存在的会话 id 并缓存（5 分钟）。**没有会话就调不通。**
+- **`chat_session_id` 使用远端创建后返回的 ID**，而非本地随意生成的 ID。Brain 以 `POST /panel/session` 创建空会话，再用 `GET /panel/id/data` 校验 ID 匹配且历史为空。
+  `X-Brain-Conversation-Id` 将本地会话绑定到此远端会话；`state/brain-session-map.json` 按 `accountKey` 与 `baseURL` 记录绑定。
+  provenance 为 `created`、`pool`、`legacy` 或 `unverified`；已有非 `created` Brain 绑定以 409 fail closed。scope 与恢复说明见 SETUP。
 - **`task_name`**：普通对话是 `chat`，Agent 模式是 `task`。
 - **`metadatas.html_content`**：Tabbit 前端发的是 HTML，不是纯文本。
 - **`entity.key`**：固定常量 `d41d8cd98f00b204e9800998ecf8427e`（这是
@@ -153,18 +165,13 @@ x-nonce = HMAC-SHA256(signKey, message)   → 十六进制小写
 
 ### messages → content 的拼接规则
 
-**这里有一个实测出来的限制**：Tabbit 后端对输入长度有上限（**约 20500 字符**，超了返回 492）。
-网关自己卡在 **19000** 留出余量，并且**按优先级分配预算**，而不是简单截断：
+Brain 发送专用提示词和显式提供的任务材料，不继承 DSH 预设或技能目录。需要 DSH 专有 Skill 时，必须由主代理先执行，再把相关结果作为文字传入；单独提供本机路径或 Skill 名称不能让 Brain 读取。插件使用 `contextBudgetChars` 为当前任务及近期完整问答对分配预算；当前任务超限时报错，不静默截断。拼接内容中的 `[System]` 是文本角色标记，不是原生 system 角色传输。
 
-```
-最新一条 user 消息   >   系统提示（开头）   >   近期历史
-```
+上游 Tabbit 服务可以使用自己的搜索/网页抓取工具和自己的 Skill/妙招资料检索，但这不是 DSH 技能目录。上游浏览器任务事件、`agent_mode` 和 `browser_control` 指令都已被观察到；本网关没有实现浏览器自动化 WebSocket，也不会执行返回的浏览器控制指令。`show_widget` 结果可以由本网关捕获并保存；DSH 客户端内嵌渲染不属于本协议契约。
 
-其中最新 user 消息单独有 **12000** 字符的上限。（另：单次最多带 4 张图）
+生产 Brain create 失败直接暴露错误，不 fallback 到池会话。Brain pool 相关的 409 兼容仅属于显式选择的兼容 fixture；独立 legacy mode 保留可运行的列表池路径。Task4 的 83 项源码测试和独立 review 已通过，本机部署也已有默认端口、重启、新会话、A/B、后台任务和分页证据。created 空会话 fixture 不证明远端隐藏账号记忆不存在，该结论尚未证明。能力验收另行分层：搜索/网页抓取、读图、Tabbit 自有 Skill 资料检索和网关 Widget 捕获已通过；浏览器任务执行、browser_control 执行和客户端内嵌渲染仍未验证。
 
-> **这个限制解释了一个真实的故障**：早期直接委派时，提示词到 61,031 字符，
-> 被截断后模型只看到"框架注入 + 技能清单"，**任务整个丢失**。
-> 本插件的"独立预设"设计就是为了把提示词压到 KB 级，从根上避开这个限制。
+历史观测：早期抓包记录过约 20500 字符附近的输入阈值，也记录过 61,031 字符的继承提示词在截断后丢失任务材料。这些数字不是当前后端上限，也不代表错误码 492 的通用含义。legacy 拼接预算须以部署网关为准；Brain 专用提示词不是配套 DSH 预设。
 
 ---
 
@@ -223,7 +230,7 @@ id: 123
 | 错误码 **492** 被当成鉴权失败 | 492 是**配额用尽**，不是鉴权问题。网关见到它就白跑一次 cookie 刷新 | 已知小瑕疵 |
 | 模型列表为空 | 账号套餐/地区不含该模型 | 正常行为 |
 | 图片理解停在语义层 | 后端转描述（见第七节） | 设计如此，非缺陷 |
-| 签名默认 key 失效 | 上游常量，随版本可能变 | 网关优先拉取，失败才回落 |
+| 签名默认 key 失效 | 上游常量，随版本可能变 | 固定 key 直接使用；自动获取错误会传播 |
 
 ---
 

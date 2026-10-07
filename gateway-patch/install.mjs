@@ -14,7 +14,7 @@
 //   node gateway-patch/install.mjs --dir ~/.tabbit-gateway/tabbit-toy --dry-run
 //   node gateway-patch/install.mjs --dir ~/.tabbit-gateway/tabbit-toy
 
-import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, statSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,15 @@ import { execFileSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UPSTREAM = 'https://github.com/goehou/tabbit-toy';
+const OVERLAY = join(HERE, 'files');
+const MANIFEST = [
+  ['scripts/lib/detect.mjs', '原创新增：浏览器安装位置与 profile 自动探测'],
+  ['scripts/lib/cdp.mjs', '修改：新增 withEphemeralBrowser（短命 headless 取 cookie）'],
+  ['src/config.mjs', '修改：自动探测与账号键、映射状态路径配置'],
+  ['src/server.mjs', '修改：cookie 续期与 Brain 会话路由'],
+  ['src/brain-session-map.mjs', '原创新增：持久化 Brain 会话映射'],
+  ['src/remote-session-client.mjs', '原创新增：远端会话创建与历史验证'],
+];
 
 const SPEC = {
   '--dir': { arg: '<path>', desc: '网关安装目录。', default: join(homedir(), '.tabbit-gateway', 'tabbit-toy') },
@@ -64,10 +73,16 @@ ${Object.entries(SPEC).map(([f, s]) =>
 ).join('\n')}
 
 它做四件事:
-  1. 从上游 clone 网关（不 clone 就加 --skip-clone）
-  2. 覆盖我们改动的文件（scripts/lib/detect.mjs、cdp.mjs、src/config.mjs、src/server.mjs）
-  3. 写 .env（API key 与 Tabbit 地址由你指定）
-  4. 验证：启动一次，确认能自动取到 cookie
+  1. 预检全部六个源文件；从上游 clone 网关（--skip-clone 跳过所有 Git/网络子进程）
+  2. 覆盖清单文件，首次原文件备份保留，不在重装时替换：
+${MANIFEST.map(([rel]) => `     ${rel}`).join('\n')}
+  3. 写 .env；已有值保留，只追加缺项；映射状态与无关文件保持原样
+  4. 显示手动启动步骤；安装器不启动服务或浏览器
+
+--dry-run 不创建目录、不执行 Git/网络、不写配置，API key 输出已脱敏。
+TABBIT_ACCOUNT_KEY 是显式非秘密账号标签（默认 default），不是自动账号识别。
+TABBIT_BRAIN_SESSION_MAP_PATH 默认指向网关 state/brain-session-map.json。
+这两项可手动写入 .env；配置优先读取 .env 的非空值，其次 shell 环境变量。
 
 做完之后仍需你手动做:
   - 在 DSH 的 settings.yaml 里注册 provider（见 SETUP.md）
@@ -85,6 +100,16 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help) { help(); process.exit(0); }
 const DRY = Boolean(args.dry_run);
 const DIR = resolve(args.dir);
+
+// Check the entire overlay before touching the target or launching Git.
+const missing = MANIFEST.filter(([rel]) => {
+  const src = join(OVERLAY, rel);
+  return !existsSync(src) || !statSync(src).isFile();
+});
+if (missing.length) {
+  missing.forEach(([rel]) => err(`必需源文件缺失或非常规文件: ${rel}`));
+  process.exit(1);
+}
 
 log(`\n  Tabbit 网关安装器${DRY ? '  [DRY-RUN，不会写任何文件]' : ''}`);
 log(`  安装目录: ${DIR}`);
@@ -125,23 +150,14 @@ if (args.skip_clone) {
 step(2, '应用我们的改动');
 log('    分为两类：原创新增文件、修改过的上游文件。');
 
-const OVERLAY = join(HERE, 'files');
-const MANIFEST = [
-  ['scripts/lib/detect.mjs', '原创新增：浏览器安装位置与 profile 自动探测'],
-  ['scripts/lib/cdp.mjs', '修改：新增 withEphemeralBrowser（短命 headless 取 cookie）'],
-  ['src/config.mjs', '修改：browserExe / browserUserDataDir 走自动探测'],
-  ['src/server.mjs', '修改：cookie 刷新失败时回退到短命 headless'],
-];
-
 let copied = 0;
 for (const [rel, why] of MANIFEST) {
   const src = join(OVERLAY, rel);
   const dst = join(DIR, rel);
-  if (!existsSync(src)) { warn(`源文件缺失: ${src}`); continue; }
   log(`    ${rel}`);
   log(`      ${why}`);
   if (DRY) { log(`      [dry-run] 会覆盖 → ${dst}`); continue; }
-  if (existsSync(dst)) copyFileSync(dst, `${dst}.upstream-bak`);
+  if (existsSync(dst) && !existsSync(`${dst}.upstream-bak`)) copyFileSync(dst, `${dst}.upstream-bak`);
   mkdirSync(dirname(dst), { recursive: true });
   copyFileSync(src, dst);
   copied++;
@@ -185,7 +201,7 @@ TABBIT_COOKIE=
 
 if (DRY) {
   log('    [dry-run] 会写入 .env：');
-  log(envContent.split('\n').map((l) => '      ' + l).join('\n'));
+  log(envContent.split('\n').map((l) => '      ' + (l.startsWith('API_KEY=') ? 'API_KEY=[redacted]' : l)).join('\n'));
 } else if (existsSync(envPath)) {
   warn('.env 已存在，保留原文件（只补缺失项）');
   const cur = readFileSync(envPath, 'utf8');
@@ -193,7 +209,7 @@ if (DRY) {
   const add = envContent.split('\n')
     .filter((l) => /^[A-Z_]+=/.test(l) && !have.has(l.split('=')[0]))
     .join('\n');
-  if (add) { writeFileSync(envPath, cur.trimEnd() + '\n\n' + add + '\n'); ok('已补缺失项'); }
+  if (add) { writeFileSync(envPath, cur + (cur.endsWith('\n') ? '\n' : '\n\n') + add + '\n'); ok('已补缺失项'); }
   else ok('无需改动');
 } else {
   writeFileSync(envPath, envContent);

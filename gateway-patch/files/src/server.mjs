@@ -21,6 +21,7 @@
 //   curl http://localhost:8787/v1/chat/completions -d '{"model":"Default","messages":[{"role":"user","content":"你好"}],"stream":true}'
 
 import { createServer } from 'node:http';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -32,30 +33,55 @@ import {
 } from '../scripts/lib/tabbit.mjs';
 import { refreshFromBrowser, withEphemeralBrowser } from '../scripts/lib/cdp.mjs';
 import { startAutoCheckin } from '../scripts/lib/checkin.mjs';
+import { createBrainSessionMap } from './brain-session-map.mjs';
+import { createRemoteSession, checkRemoteSession } from './remote-session-client.mjs';
 
-// ─── 状态缓存 ─────────────────────────────────────────────
-let signKey = config.signKey || DEFAULT_SIGN_KEY;
-let signKeyFetchedAt = 0;
-let sessionCache = null;
-let sessionCacheAt = 0;
-
-// Cookie / 版本号运行时状态（支持自动刷新，不再只读 .env）
-let cookie = config.cookie;
-let version = config.version;
-let lastCookieRefresh = 0;
-let cookieRefreshInFlight = null;   // 防止并发刷新
-
-const SIGN_KEY_TTL = 10 * 60 * 1000;  // 10 分钟刷新一次签名 key
-const SESSION_TTL = 5 * 60 * 1000;    // 5 分钟刷新一次会话列表
+// ─── 每实例运行时状态 ───────────────────────────────────────
+const runtimeStore = new AsyncLocalStorage();
+function assertConfiguredBase(baseUrl) {
+  if (baseUrl !== config.baseUrl) throw Object.assign(new Error('upstream base URL differs from configured environment'), { code: 'UPSTREAM_BASE_URL_MISMATCH' });
+}
+const createRuntime = (options = {}) => ({
+  signKey: options.signKey || config.signKey || DEFAULT_SIGN_KEY,
+  fixedSignKey: options.signKey ?? config.signKey,
+  fetchSignKeyFn: options.fetchSignKey || ((...args) => { assertConfiguredBase(args[2]); return fetchSignKey(...args); }),
+  baseUrl: (options.baseUrl || config.baseUrl).replace(/\/$/, ''),
+  log: options.log || ((...a) => console.log('[server]', ...a)),
+  refreshCookieFn: options.refreshCookie,
+  stopCheckin: null,
+  signKeyFetchedAt: 0,
+  sessionListCache: null,
+  sessionListCacheAt: 0,
+  cookie: options.cookie ?? config.cookie,
+  version: options.version || config.version,
+  lastCookieRefresh: 0,
+  cookieRefreshInFlight: null,
+  listSessionsFn: options.fetchSessionList || ((...args) => { assertConfiguredBase(args[1]); return fetchSessionList(...args); }),
+  chatFn: options.chat || ((opts) => { assertConfiguredBase(opts.baseUrl); return chat(opts); }),
+  uploadImageFn: options.uploadImage || ((opts) => { assertConfiguredBase(opts.baseUrl); return uploadImage(opts); }),
+  brainSessionMap: null,
+  apiKeyOverride: options.apiKey ?? null,
+  timers: new Set(),
+});
+const rt = () => {
+  const state = runtimeStore.getStore();
+  if (!state) throw new Error('gateway runtime context is required');
+  return state;
+};
+const SIGN_KEY_TTL = 10 * 60 * 1000;
+const SESSION_TTL = 5 * 60 * 1000;
 const COOKIE_REFRESH_MS = config.cookieRefreshMinutes * 60 * 1000;
+const LEGACY_DEFAULT = '__legacy_default__';
 
 // ─── Cookie 自动刷新 ──────────────────────────────────────
 // 从本机 Tabbit 浏览器（CDP）拉取最新 cookie + 版本号，写回内存与 .env
 async function refreshCookieFromBrowser(force = false) {
-  if (cookieRefreshInFlight) return cookieRefreshInFlight;
-  if (!force && cookie && Date.now() - lastCookieRefresh < COOKIE_REFRESH_MS) return cookie;
+  const state = rt();
+  if (state.refreshCookieFn) return state.refreshCookieFn(force, state);
+  if (state.cookieRefreshInFlight) return state.cookieRefreshInFlight;
+  if (!force && state.cookie && Date.now() - state.lastCookieRefresh < COOKIE_REFRESH_MS) return state.cookie;
 
-  cookieRefreshInFlight = (async () => {
+  state.cookieRefreshInFlight = (async () => {
     try {
       // 快路径：调试端口上已有实例（用户自己带端口启动的），直接读
       return await pullCookieOnce();
@@ -63,7 +89,7 @@ async function refreshCookieFromBrowser(force = false) {
       if (!config.browserAutoLaunch) {
         log(`cookie 自动刷新失败: ${e.message}（设置 TABBIT_EXE + TABBIT_AUTO_LAUNCH_BROWSER=1 `
           + '可让服务用短命 headless 实例自动取 cookie）');
-        return cookie;
+        return state.cookie;
       }
 
       // 慢路径：起一个**短命 headless 实例**取 cookie，取完立刻杀掉。
@@ -75,52 +101,54 @@ async function refreshCookieFromBrowser(force = false) {
         port: config.cdpPort,
         exe: config.browserExe,
         userDataDir: config.browserUserDataDir,
-        baseUrl: config.baseUrl,
+        baseUrl: rt().baseUrl,
         timeoutMs: config.browserLaunchTimeoutMs,
         log: (m) => log(`[headless] ${m}`),
       });
       if (!r.ok) {
         log(`短命 headless 取 cookie 失败 (${r.action})，本次沿用旧 cookie`);
-        return cookie;
+        return state.cookie;
       }
       // 实例已经被杀，直接采用它取到的值
-      cookie = r.cookie;
-      if (r.version && r.version !== version) {
-        log(`版本号更新: ${version} → ${r.version}`);
-        version = r.version;
+      state.cookie = r.cookie;
+      if (r.version && r.version !== state.version) {
+        log(`版本号更新: ${state.version} → ${r.version}`);
+        state.version = r.version;
       }
-      lastCookieRefresh = Date.now();
+      state.lastCookieRefresh = Date.now();
       persistEnv();
-      log(`cookie 已自动刷新 (${r.count} 个, 长度 ${cookie.length}, 版本 ${version}) [${r.action}]`);
-      return cookie;
+      log(`cookie 已自动刷新 (${r.count} 个, 长度 ${state.cookie.length}, 版本 ${state.version}) [${r.action}]`);
+      return state.cookie;
     } finally {
-      cookieRefreshInFlight = null;
+      state.cookieRefreshInFlight = null;
     }
   })();
-  return cookieRefreshInFlight;
+  return state.cookieRefreshInFlight;
 }
 
 /** 从浏览器拉一次 cookie 并写回内存 + env 文件；失败抛错由调用方兜底。 */
 async function pullCookieOnce() {
   const { cookie: fresh, count, version: freshVersion } = await refreshFromBrowser({
     port: config.cdpPort,
-    baseUrl: config.baseUrl,
+    baseUrl: rt().baseUrl,
   });
   if (!fresh) throw new Error('浏览器返回空 cookie');
-  cookie = fresh;
-  if (freshVersion && freshVersion !== version) {
-    log(`版本号更新: ${version} → ${freshVersion}`);
-    version = freshVersion;
+  const state = rt();
+  state.cookie = fresh;
+  if (freshVersion && freshVersion !== state.version) {
+    log(`版本号更新: ${state.version} → ${freshVersion}`);
+    state.version = freshVersion;
   }
-  lastCookieRefresh = Date.now();
+  state.lastCookieRefresh = Date.now();
   persistEnv();
-  log(`cookie 已自动刷新 (${count} 个, 长度 ${cookie.length}, 版本 ${version})`);
-  return cookie;
+  log(`cookie 已自动刷新 (${count} 个, 长度 ${state.cookie.length}, 版本 ${state.version})`);
+  return state.cookie;
 }
 
 // 把最新 cookie / 版本号持久化到当前实例的 env 文件（默认 .env，可用 TABBIT_ENV 指定），
 // 浏览器关闭后重启服务仍可用
 function persistEnv() {
+  const state = rt();
   try {
     // isAbsolute 兼容 TABBIT_ENV 传入绝对路径(如 /etc/x.env 或 D:\x.env)；
     // 相对路径仍按 server.mjs 所在目录回退到项目根
@@ -129,8 +157,8 @@ function persistEnv() {
       : fileURLToPath(new URL('../' + config.envFile, import.meta.url));
     let content = readFileSync(envPath, 'utf8');
     // 函数替换:避免 cookie/version 含 $&/$1/$' 时被 String.replace 当作匹配模式
-    content = content.replace(/^TABBIT_COOKIE=.*$/m, () => `TABBIT_COOKIE=${cookie}`);
-    content = content.replace(/^TABBIT_VERSION=.*$/m, () => `TABBIT_VERSION=${version}`);
+    content = content.replace(/^TABBIT_COOKIE=.*$/m, () => `TABBIT_COOKIE=${state.cookie}`);
+    content = content.replace(/^TABBIT_VERSION=.*$/m, () => `TABBIT_VERSION=${state.version}`);
     writeFileSync(envPath, content);
   } catch (e) {
     log('写回', config.envFile, '失败:', e.message);
@@ -146,33 +174,34 @@ function isAuthError(e) {
 }
 
 async function ensureSignKey() {
-  if (config.signKey) return config.signKey;
-  if (!signKey || Date.now() - signKeyFetchedAt > SIGN_KEY_TTL) {
-    signKey = await fetchSignKey(cookie, version);
-    signKeyFetchedAt = Date.now();
-    log(`signKey 刷新: ${signKey.slice(0, 8)}…`);
+  const state = rt();
+  if (state.fixedSignKey) return state.fixedSignKey;
+  if (!state.signKey || Date.now() - state.signKeyFetchedAt > SIGN_KEY_TTL) {
+    state.signKey = await state.fetchSignKeyFn(state.cookie, state.version, state.baseUrl);
+    state.signKeyFetchedAt = Date.now();
+    log('signKey refreshed');
   }
-  return signKey;
+  return state.signKey;
 }
 
-async function getSessionId() {
-  if (sessionCache && Date.now() - sessionCacheAt < SESSION_TTL) return sessionCache;
-  const sessions = await fetchSessionList(cookie);
-  if (sessions.length === 0) {
-    throw new Error('账号下无可用会话，请先在 Tabbit 浏览器里创建一个对话');
-  }
-  sessionCache = sessions[0];
-  sessionCacheAt = Date.now();
-  log(`会话缓存: ${sessionCache.slice(0, 8)}… (共 ${sessions.length} 个)`);
-  return sessionCache;
+async function getSessionList() {
+  const state = rt();
+  if (state.sessionListCache && Date.now() - state.sessionListCacheAt < SESSION_TTL) return state.sessionListCache;
+  const sessions = await state.listSessionsFn(state.cookie, state.baseUrl);
+  if (!Array.isArray(sessions)) throw new TypeError('session list must be an array');
+  state.sessionListCache = sessions;
+  state.sessionListCacheAt = Date.now();
+  log(`会话列表缓存: ${sessions.length} 个`);
+  return sessions;
 }
 
-function invalidateSession() {
-  sessionCache = null;
+function invalidateSessions() {
+  rt().sessionListCache = null;
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────
-function log(...a) { console.log('[server]', ...a); }
+function log(...a) { rt().log(...a); }
+const shortId = value => String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 8);
 
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
@@ -197,9 +226,10 @@ function readBody(req) {
 }
 
 function checkAuth(req) {
-  if (!config.apiKey) return true;
+  const requiredKey = rt().apiKeyOverride ?? config.apiKey;
+  if (!requiredKey) return true;
   const auth = req.headers['authorization'] || '';
-  return auth === `Bearer ${config.apiKey}`;
+  return auth === `Bearer ${requiredKey}`;
 }
 
 // OpenAI messages 数组 → Tabbit content 字符串
@@ -335,7 +365,9 @@ function parseModelId(modelId) {
 
 async function handleModels(res) {
   const key = await ensureSignKey();
-  const models = await getModels(cookie, version, key);
+  const state = rt();
+  assertConfiguredBase(state.baseUrl);
+  const models = await getModels(state.cookie, state.version, key);
   const data = [];
   for (const m of models) {
     if (!ALLOWED_MODEL_NAMES.has(m.display_name)) continue;
@@ -350,16 +382,17 @@ async function handleModels(res) {
 
 // GET /healthz
 async function handleHealth(res) {
+  const state = rt();
   try {
     const key = await ensureSignKey();
-    const sessions = await fetchSessionList(cookie);
+    const sessions = await state.listSessionsFn(state.cookie, state.baseUrl);
     sendJson(res, 200, {
       ok: true,
-      version,
+      version: state.version,
       signKey: key.slice(0, 8) + '…',
       sessions: sessions.length,
       cookieAutoRefresh: config.cdpPort ? 'on' : 'off',
-      lastCookieRefresh: lastCookieRefresh ? new Date(lastCookieRefresh).toISOString() : null,
+      lastCookieRefresh: state.lastCookieRefresh ? new Date(state.lastCookieRefresh).toISOString() : null,
     });
   } catch (e) {
     sendJson(res, 503, { ok: false, error: e.message });
@@ -368,12 +401,13 @@ async function handleHealth(res) {
 
 // POST /admin/refresh-cookie — 手动触发 cookie 刷新（幂等）
 async function handleRefreshCookie(res) {
+  const state = rt();
   await refreshCookieFromBrowser(true);
   sendJson(res, 200, {
     ok: true,
-    cookieLength: cookie.length,
-    version,
-    lastCookieRefresh: lastCookieRefresh ? new Date(lastCookieRefresh).toISOString() : null,
+    cookieLength: state.cookie.length,
+    version: state.version,
+    lastCookieRefresh: state.lastCookieRefresh ? new Date(state.lastCookieRefresh).toISOString() : null,
   });
 }
 
@@ -422,7 +456,68 @@ function widgetFooter(saved) {
 }
 
 // POST /v1/chat/completions
+function readBrainConversationId(req) {
+  const raw = req.rawHeaders || [];
+  const values = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    if (String(raw[i]).toLowerCase() === 'x-brain-conversation-id') values.push(raw[i + 1]);
+  }
+  if (values.length === 0) return { id: LEGACY_DEFAULT, explicit: false };
+  if (values.length > 1) {
+    const error = new TypeError('X-Brain-Conversation-Id must appear at most once');
+    error.code = 'DUPLICATE_BRAIN_CONVERSATION_ID';
+    throw error;
+  }
+  const value = values[0];
+  if (typeof value !== 'string' || !value.trim() || value.length > 200 || value === LEGACY_DEFAULT) {
+    const error = new TypeError('X-Brain-Conversation-Id must be a non-empty string of at most 200 characters');
+    error.code = 'INVALID_BRAIN_CONVERSATION_ID';
+    throw error;
+  }
+  return { id: value, explicit: true };
+}
+
+function requestAborted() {
+  return Object.assign(new Error('REMOTE_SESSION_ABORTED'), { code: 'REMOTE_SESSION_ABORTED' });
+}
+
+// A caller stops waiting without aborting a mapping operation shared by other callers.
+function waitForRequest(promise, signal) {
+  if (signal.aborted) return Promise.reject(requestAborted());
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(requestAborted());
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(value => {
+      signal.removeEventListener('abort', abort);
+      if (signal.aborted) reject(requestAborted()); else resolve(value);
+    }, error => { signal.removeEventListener('abort', abort); reject(error); });
+  });
+}
+
+async function prepareSession(state, conversationId, signal) {
+  const resolve = options => waitForRequest(state.brainSessionMap.resolve(conversationId, { touch: false, ...options }), signal);
+  let resolved = await resolve();
+  const check = () => waitForRequest(Promise.resolve().then(() => state.checkRemoteSessionFn({
+    cookie: state.cookie, baseUrl: state.baseUrl, remoteSessionId: resolved.remoteSessionId, signal,
+  })), signal);
+  try { await check(); }
+  catch (error) {
+    if (signal.aborted) throw requestAborted();
+    if (error.code !== 'REMOTE_SESSION_NOT_FOUND' || resolved.scope === 'legacy') throw error;
+    log(`sessionScope=${resolved.scope} code=${error.code} remoteSessionId=${shortId(resolved.remoteSessionId)}`);
+    resolved = await resolve({ excludeRemoteSessionIds: [resolved.remoteSessionId] });
+    await check();
+  }
+  if (signal.aborted) throw requestAborted();
+  return resolved;
+}
+
 async function handleChat(req, res, rawBody) {
+  const ac = new AbortController();
+  const abort = () => ac.abort();
+  req.once('aborted', abort);
+  res.once('close', () => { if (!res.writableEnded) abort(); });
+  if (req.aborted || res.destroyed) abort();
   let body;
   try { body = JSON.parse(rawBody); }
   catch { return sendJson(res, 400, { error: { message: 'invalid JSON body' } }); }
@@ -436,11 +531,30 @@ async function handleChat(req, res, rawBody) {
   const { baseModel, agentMode } = parseModelId(model);
   log(`[mode] requested=${model} base=${baseModel} agentMode=${agentMode} stream=${stream}`);
 
+  const state = rt();
   let key, sessionId, content, images = [], references = [], htmlContent;
   try {
-    [key, sessionId] = await Promise.all([ensureSignKey(), getSessionId()]);
+    const header = readBrainConversationId(req);
+    const conversationId = header.id;
+    if (header.explicit && conversationId === LEGACY_DEFAULT) {
+      const error = new TypeError('explicit legacy conversation id is reserved');
+      error.code = 'INVALID_BRAIN_CONVERSATION_ID';
+      throw error;
+    }
+    if (!state.brainSessionMap) throw new Error('Brain session map is not initialized');
+    const resolved = await prepareSession(state, conversationId, ac.signal);
+    sessionId = resolved.remoteSessionId;
+    log(`sessionScope=${resolved.scope} conversationId=${shortId(conversationId)} requestId=${shortId(req.headers['x-brain-request-id'] || randomUUID())} remoteSessionId=${shortId(sessionId)}`);
+    key = await waitForRequest(ensureSignKey(), ac.signal);
     ({ content, images } = messagesToContent(messages));
   } catch (e) {
+    if (ac.signal.aborted || res.destroyed) return;
+    if (e.code === 'INVALID_BRAIN_CONVERSATION_ID' || e.code === 'DUPLICATE_BRAIN_CONVERSATION_ID') return sendJson(res, 400, { error: { message: e.message, code: e.code } });
+    if (e.code === 'REMOTE_SESSION_POOL_EXHAUSTED') return sendJson(res, 409, { error: { message: e.message, code: e.code } });
+    if (e.code === 'BRAIN_SESSION_PROVENANCE_UNVERIFIED') return sendJson(res, 409, { error: { message: e.code, code: e.code } });
+    if (/^REMOTE_SESSION_(CREATE|HISTORY|TIMEOUT|ABORTED|CONFIG)_/.test(e.code || '') || ['REMOTE_SESSION_TIMEOUT', 'REMOTE_SESSION_ABORTED', 'REMOTE_SESSION_NOT_FOUND'].includes(e.code)) {
+      return sendJson(res, 502, { error: { message: e.code, code: e.code, ...(Number.isInteger(e.status) ? { status: e.status } : {}) } });
+    }
     return sendJson(res, 502, { error: { message: 'prepare failed: ' + e.message } });
   }
 
@@ -451,14 +565,16 @@ async function handleChat(req, res, rawBody) {
     for (const dataUrl of images) {
       try {
         const { bytes, contentType, filename } = decodeImage(dataUrl);
-        const up = await uploadImage({
-          cookie, version, signKey: key, bytes, filename, contentType, sessionId,
-        });
+        if (ac.signal.aborted) return;
+        const up = await waitForRequest(state.uploadImageFn({
+          cookie: state.cookie, version: state.version, signKey: key, baseUrl: state.baseUrl, bytes, filename, contentType, sessionId, signal: ac.signal,
+        }), ac.signal);
         const ref = imageReference({ fileId: up.fileId, downloadUrl: up.downloadUrl, filename });
         references.push(ref);
         chips.push(mentionChip(ref, filename));
         log(`[media] 已上传 ${filename} (${bytes.length}B) -> file_id=${up.fileId}`);
       } catch (e) {
+        if (ac.signal.aborted) return;
         log(`[media] 图片上传失败: ${e.message}`);
       }
     }
@@ -474,7 +590,9 @@ async function handleChat(req, res, rawBody) {
   // 所有 chat() 调用都改走 tapped()，四处调用点共用同一套采集逻辑。
   const savedWidgets = [];
   async function* tapped(opts) {
-    for await (const ev of chat(opts)) {
+    if (ac.signal.aborted) return;
+    for await (const ev of state.chatFn({ ...opts, signal: ac.signal })) {
+      if (ac.signal.aborted) return;
       if (ev.event === 'tool_finish') {
         const d = ev.data;
         const first = Array.isArray(d?.results) ? d.results[0] : null;
@@ -491,22 +609,21 @@ async function handleChat(req, res, rawBody) {
   if (!stream) {
     let full = '';
     try {
-      for await (const ev of tapped({ cookie, version, signKey: key, sessionId, model: baseModel, agentMode, content, references, htmlContent })) {
+      for await (const ev of tapped({ cookie: state.cookie, version: state.version, signKey: key, baseUrl: state.baseUrl, sessionId, model: baseModel, agentMode, content, references, htmlContent })) {
         if (ev.event === 'message_chunk' && ev.data?.content) {
           full += ev.data.content;
         } else if (ev.event === 'error') {
-          invalidateSession();
+          invalidateSessions();
           // 认证类错误 → 自动刷新 cookie 后重试一次
-          if (isAuthError(new TabbitError(ev.data?.code || 0, ev.data?.message || ''))) {
+          if (!full && !ac.signal.aborted && isAuthError(new TabbitError(ev.data?.code || 0, ev.data?.message || ''))) {
             log('检测到认证错误，刷新 cookie 后重试…');
             await refreshCookieFromBrowser(true);
             key = await ensureSignKey();
-            sessionId = await getSessionId();
             full = '';
-            for await (const ev2 of tapped({ cookie, version, signKey: key, sessionId, model: baseModel, agentMode, content, references, htmlContent })) {
+            for await (const ev2 of tapped({ cookie: state.cookie, version: state.version, signKey: key, baseUrl: state.baseUrl, sessionId, model: baseModel, agentMode, content, references, htmlContent })) {
               if (ev2.event === 'message_chunk' && ev2.data?.content) full += ev2.data.content;
               else if (ev2.event === 'error') {
-                invalidateSession();
+                invalidateSessions();
                 return sendJson(res, 502, { error: { message: ev2.data?.message || 'Tabbit error', code: ev2.data?.code } });
               }
             }
@@ -516,18 +633,18 @@ async function handleChat(req, res, rawBody) {
         }
       }
     } catch (e) {
-      if (e instanceof TabbitError) invalidateSession();
+      if (e instanceof TabbitError) invalidateSessions();
       // fetch 级认证错误同样触发刷新重试
-      if (isAuthError(e)) {
+      if (ac.signal.aborted || res.destroyed) return;
+      if (!full && isAuthError(e)) {
         log('检测到认证错误（fetch），刷新 cookie 后重试…');
         await refreshCookieFromBrowser(true);
         try {
           key = await ensureSignKey();
-          sessionId = await getSessionId();
           full = '';
-          for await (const ev of tapped({ cookie, version, signKey: key, sessionId, model: baseModel, agentMode, content, references, htmlContent })) {
+          for await (const ev of tapped({ cookie: state.cookie, version: state.version, signKey: key, baseUrl: state.baseUrl, sessionId, model: baseModel, agentMode, content, references, htmlContent })) {
             if (ev.event === 'message_chunk' && ev.data?.content) full += ev.data.content;
-            else if (ev.event === 'error') { invalidateSession(); return sendJson(res, 502, { error: { message: ev.data?.message || 'Tabbit error', code: ev.data?.code } }); }
+            else if (ev.event === 'error') { invalidateSessions(); return sendJson(res, 502, { error: { message: ev.data?.message || 'Tabbit error', code: ev.data?.code } }); }
           }
         } catch (e2) {
           return sendJson(res, 502, { error: { message: e2.message } });
@@ -554,6 +671,8 @@ async function handleChat(req, res, rawBody) {
   }
 
   // ─── 流式：SSE 转 OpenAI chunk ───
+  if (ac.signal.aborted || res.destroyed) return;
+  let streamFailed = false;
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
@@ -561,9 +680,6 @@ async function handleChat(req, res, rawBody) {
     'Access-Control-Allow-Origin': '*',
   });
 
-  // 客户端断开时中止上游请求
-  const ac = new AbortController();
-  req.on('close', () => ac.abort());
 
   const sendChunk = (delta, finishReason = null) =>
     res.write(`data: ${JSON.stringify({
@@ -575,11 +691,12 @@ async function handleChat(req, res, rawBody) {
   sendChunk({ role: 'assistant' });
 
   try {
-    for await (const ev of tapped({ cookie, version, signKey: key, sessionId, model: baseModel, agentMode, content, references, htmlContent, signal: ac.signal })) {
+    for await (const ev of tapped({ cookie: state.cookie, version: state.version, signKey: key, baseUrl: state.baseUrl, sessionId, model: baseModel, agentMode, content, references, htmlContent, signal: ac.signal })) {
       if (ev.event === 'message_chunk' && ev.data?.content) {
         sendChunk({ content: ev.data.content });
       } else if (ev.event === 'error') {
-        invalidateSession();
+        streamFailed = true;
+        invalidateSessions();
         if (isAuthError(new TabbitError(ev.data?.code || 0, ev.data?.message || ''))) {
           log('检测到认证错误，后台刷新 cookie…（下一次请求生效）');
           await refreshCookieFromBrowser(true);
@@ -589,8 +706,9 @@ async function handleChat(req, res, rawBody) {
       }
     }
   } catch (e) {
-    if (e.name !== 'AbortError') {
-      if (e instanceof TabbitError) invalidateSession();
+    streamFailed = true;
+    if (e.name !== 'AbortError' && !ac.signal.aborted) {
+      if (e instanceof TabbitError) invalidateSessions();
       if (isAuthError(e)) {
         log('检测到认证错误（fetch），后台刷新 cookie…');
         await refreshCookieFromBrowser(true);
@@ -598,21 +716,42 @@ async function handleChat(req, res, rawBody) {
       res.write(`data: ${JSON.stringify({ error: { message: e.message } })}\n\n`);
     }
   }
-  const footer = widgetFooter(savedWidgets);
-  if (footer) sendChunk({ content: footer });
-  sendChunk({}, 'stop');
+  if (ac.signal.aborted || res.destroyed) return;
+  if (!streamFailed) {
+    const footer = widgetFooter(savedWidgets);
+    if (footer) sendChunk({ content: footer });
+    sendChunk({}, 'stop');
+  }
   res.write('data: [DONE]\n\n');
   res.end();
 }
 
 // ─── HTTP 服务 ────────────────────────────────────────────
-const server = createServer(async (req, res) => {
+export function createGatewayServer(options = {}) {
+  const state = createRuntime(options);
+  const allocationMode = options.allocationMode ?? 'fresh';
+  if (!['fresh', 'pool'].includes(allocationMode)) throw Object.assign(new Error('REMOTE_SESSION_ALLOCATION_MODE_INVALID'), { code: 'REMOTE_SESSION_ALLOCATION_MODE_INVALID' });
+  if (allocationMode === 'pool' && options.allowPoolForTests !== true) throw Object.assign(new Error('REMOTE_SESSION_POOL_MODE_DISABLED'), { code: 'REMOTE_SESSION_POOL_MODE_DISABLED' });
+  if (state.baseUrl !== config.baseUrl && !(options.fetchSessionList && options.chat && options.uploadImage && (state.fixedSignKey || options.fetchSignKey))) assertConfiguredBase(state.baseUrl);
+  state.checkRemoteSessionFn = options.checkRemoteSession || (allocationMode === 'pool' ? async () => {} : args => checkRemoteSession({ ...args, fetchImpl: options.fetchImpl }));
+  state.brainSessionMap = createBrainSessionMap({
+    statePath: options.statePath || config.brainSessionStatePath,
+    accountKey: options.accountKey || config.accountKey,
+    scopeKey: JSON.stringify([options.accountKey || config.accountKey, state.baseUrl]),
+    listSessions: () => runtimeStore.run(state, () => getSessionList()),
+    createSession: allocationMode === 'pool' ? undefined : (options.createSession || (({ signal }) => createRemoteSession({
+      cookie: state.cookie, baseUrl: state.baseUrl, signal, fetchImpl: options.fetchImpl,
+    }))),
+    onCorrupt: options.onCorrupt || ((event) => state.log(`mapping state event=${event.code}`)),
+  });
+
+  const httpServer = createServer((req, res) => runtimeStore.run(state, async () => {
   // CORS 预检
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Brain-Conversation-Id, X-Brain-Request-Id',
     });
     return res.end();
   }
@@ -634,19 +773,41 @@ const server = createServer(async (req, res) => {
     if (path === '/admin/refresh-cookie' && req.method === 'POST') return await handleRefreshCookie(res);
     sendJson(res, 404, { error: { message: `not found: ${req.method} ${path}` } });
   } catch (e) {
-    log('error:', e);
+    log('request failed', e instanceof TabbitError ? `status=${e.status}` : 'internal_error');
     if (!res.headersSent) sendJson(res, 500, { error: { message: e.message } });
     else res.end();
   }
-});
+  }));
+  const originalClose = httpServer.close.bind(httpServer);
+  httpServer.close = (callback) => {
+    state.stopCheckin?.stop();
+    state.stopCheckin = null;
+    state.timers.forEach(timer => clearInterval(timer));
+    state.timers.clear();
+    return originalClose(async (...args) => {
+      await state.cookieRefreshInFlight?.catch(() => {});
+      await state.brainSessionMap.close();
+      if (callback) callback(...args);
+    });
+  };
+  httpServer.runtimeState = state;
+  return httpServer;
+}
 
-server.listen(config.port, '127.0.0.1', () => {
+export async function startProduction(options = {}) {
+  const stateServer = createGatewayServer(options);
+  const productionState = stateServer.runtimeState;
+  await new Promise((resolve, reject) => { stateServer.once('error', reject); stateServer.listen(options.port ?? config.port, '127.0.0.1', resolve); });
+  await runtimeStore.run(productionState, () => refreshCookieFromBrowser(true));
+  const timer = setInterval(() => runtimeStore.run(productionState, () => refreshCookieFromBrowser()), COOKIE_REFRESH_MS);
+  timer.unref();
+  productionState.timers.add(timer);
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' Tabbit2API · OpenAI 兼容代理');
   console.log(`  端口: ${config.port}`);
   console.log(`  鉴权: ${config.apiKey ? '已开启 (Bearer ' + config.apiKey.slice(0, 4) + '…)' : '未开启'}`);
-  console.log(`  版本: ${version}`);
-  console.log(`  Cookie自动刷新: ${cookie ? '开' : '开（启动时从浏览器拉取）'} (CDP :${config.cdpPort}, 每 ${config.cookieRefreshMinutes} 分钟)`);
+  console.log(`  版本: ${config.version}`);
+  console.log(`  Cookie自动刷新: ${config.cookie ? '开' : '开（启动时从浏览器拉取）'} (CDP :${config.cdpPort}, 每 ${config.cookieRefreshMinutes} 分钟)`);
   console.log(`  每日自动签到: ${config.autoCheckin ? '开（启动即签，每日 00:00:30 循环）' : '关（env 设 TABBIT_AUTO_CHECKIN=1 开启）'}`);
   console.log('───────────────────────────────────────────────────────────');
   console.log('  GET  /v1/models             模型列表');
@@ -654,23 +815,12 @@ server.listen(config.port, '127.0.0.1', () => {
   console.log('  GET  /healthz               健康检查');
   console.log('  POST /admin/refresh-cookie  手动刷新 cookie');
   console.log('═══════════════════════════════════════════════════════════\n');
-});
-
-// ─── 启动与定时刷新 ────────────────────────────────────────
-// 启动时从浏览器拉一次最新 cookie（幂等：失败则用 .env 中的值）
-refreshCookieFromBrowser(true);
-// 定时后台刷新（COOKIE_REFRESH_MINUTES，默认 6 小时）
-setInterval(() => refreshCookieFromBrowser(), COOKIE_REFRESH_MS).unref();
-
-// 附加功能：每日自动签到（env 开关 TABBIT_AUTO_CHECKIN=1 控制；独立于代理请求链路）
-// 只签本实例的 profile（env 文件对应的版本），启动即签，之后每日 00:00:30 循环。
-if (config.autoCheckin) {
-  const envFile = config.envFile; // 当前实例的 env 文件（.env 或 .env.domestic）
-  const profileName = envFile === '.env' ? 'intl' : envFile.replace(/^\.env\.?/, '') || 'default';
-  startAutoCheckin({
-    name: profileName,
-    envFile,
-    base: config.baseUrl,
-    cdpPort: config.cdpPort,
-  });
+  if (options.autoCheckin ?? config.autoCheckin) {
+    const envFile = config.envFile;
+    const profileName = envFile === '.env' ? 'intl' : envFile.replace(/^\.env\.?/, '') || 'default';
+    productionState.stopCheckin = (options.startAutoCheckin || startAutoCheckin)({ name: profileName, envFile, base: productionState.baseUrl, cdpPort: config.cdpPort });
+  }
+  return stateServer;
 }
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) startProduction();
