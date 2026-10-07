@@ -55,6 +55,10 @@
 
 Set `apiKeyEnv` to the name of the environment variable holding the gateway key. Do not put the key in source or docs. `brainPrompt` is shipped in the package; no companion DSH preset is required. Gateway auto-start is lazy unless warmup is enabled. A detached gateway can outlive DSH.
 
+## 只读 setup 检查助手
+
+BrainService 使用 `apiKeyEnv` 指定的环境变量直接 POST 到 `gatewayUrl`，无需 DSH provider、专用 preset 或 DSH 模型目录登记。`node scripts/setup.mjs --help` 列出检查选项。默认离线运行；`--check-gateway` 显式检查 `/v1/models`，并按需核对 `--models`。`--api-key-env` 选择密钥环境变量且不输出其值。`--dry-run` 只打印计划而不连接，`--yes` 用于自动化。助手永不启动网关，也不读取或写入 settings、preset 或凭据。
+
 ## 边界与验收
 
 - Cookie acquisition belongs to the gateway. A normal running Tabbit without CDP causes acquisition to skip; valid old cookies remain usable. See SETUP for explicit recovery.

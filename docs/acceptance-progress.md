@@ -1,4 +1,6 @@
-# Persistent Brain acceptance progress
+# Persistent Brain acceptance history
+
+This file records successive acceptance phases. Earlier failures and pending items are historical checkpoints; the final host acceptance appears at the end. Use README and SETUP for current operation contracts.
 
 ## Verified in the running DSH host
 

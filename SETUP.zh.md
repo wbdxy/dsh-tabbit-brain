@@ -47,6 +47,18 @@ Remove-Variable plain, key
 
 在插件设置中确认：`agentModel` 是 `/v1/models` 返回的实际模型 id，`gatewayUrl`、`apiKeyEnv` 和网关一致。用户也可以把 `/v1/models` 返回的任意模型 id 传给 `tabbit_brain` 的 `model` 参数，仅覆盖单次请求，不改变全局设置。`delegationStyle` 可选 `off`、`standard`（默认）或 `aggressive`。
 
+### 只读网关 setup 检查
+
+BrainService 使用 `gatewayUrl` 和 `apiKeyEnv` 直接 POST，无需 DSH provider、专用 preset 或 DSH 模型目录登记。setup 助手不读取或写入 settings、preset 或凭据，也永不启动网关。默认运行只打印检查计划。
+
+```powershell
+node scripts/setup.mjs --help
+node scripts/setup.mjs --base-url http://127.0.0.1:8787 --api-key-env TABBIT_API_KEY --models DeepSeek-V4.1-Flash --dry-run
+node scripts/setup.mjs --base-url http://127.0.0.1:8787 --api-key-env TABBIT_API_KEY --models DeepSeek-V4.1-Flash --check-gateway --yes
+```
+
+仅 `--check-gateway` 请求 `/v1/models`、读取指定环境密钥但不输出其值，并核对可选的 `--models`。基础 URL 必须为无凭据的 loopback HTTP 或 HTTPS，允许末尾 `/v1`。即使同时使用 `--check-gateway`，`--dry-run` 仍保持离线。网关停机时检查失败且不触发启动。旧选项 `--provider`、`--preset-id`、`--mount-preset`、`--write-settings`、`--force`、`--api-key` 和 `--profile` 会明确失败。
+
 ## 4. 重启并验收
 
 重启 DSH，打开普通主对话，检查工具列表中存在 `tabbit_brain`。渐进式预设先按其正常流程调用 `phase_begin`；不要调用 `phase_advance` 伪造阶段完成。

@@ -44,7 +44,7 @@
     "tools",
     "REVERSE-PROXY.md",
     "REVERSE-PROXY.zh.md",
-    "docs",
+    "docs/acceptance-progress.md",
     "package-lock.json"
   ],
   "engines": {

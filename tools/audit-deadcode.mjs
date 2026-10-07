@@ -20,7 +20,7 @@ import { dirname } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = process.argv[2] || join(HERE, '..');
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'state', 'backups', '__pycache__', '.pytest_cache']);
 const CODE_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.py']);
 const DOC_EXT = new Set(['.md', '.yml', '.yaml', '.json']);
 

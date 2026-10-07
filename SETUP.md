@@ -47,6 +47,18 @@ Remove-Variable plain, key
 
 Set `agentModel` to an id returned by `/v1/models`; keep `gatewayUrl` and `apiKeyEnv` aligned. Users can also pass any `/v1/models` id through the `tabbit_brain` `model` parameter for a single request without changing the global setting. `delegationStyle` accepts `off`, `standard` (default) and `aggressive`.
 
+### Read-only gateway setup check
+
+BrainService posts directly using `gatewayUrl` and `apiKeyEnv`. No DSH provider, dedicated preset, or DSH model-directory registration is required. The setup helper does not read or write settings, presets, or credentials; it never starts the gateway. Default runs only print a check plan.
+
+```powershell
+node scripts/setup.mjs --help
+node scripts/setup.mjs --base-url http://127.0.0.1:8787 --api-key-env TABBIT_API_KEY --models DeepSeek-V4.1-Flash --dry-run
+node scripts/setup.mjs --base-url http://127.0.0.1:8787 --api-key-env TABBIT_API_KEY --models DeepSeek-V4.1-Flash --check-gateway --yes
+```
+
+Only `--check-gateway` requests `/v1/models`, reads the named environment key without printing its value, and checks optional `--models`. The base URL must be credential-free loopback HTTP or HTTPS; a trailing `/v1` is accepted. `--dry-run` stays offline even with `--check-gateway`. A stopped gateway produces a failure without startup. Removed options `--provider`, `--preset-id`, `--mount-preset`, `--write-settings`, `--force`, `--api-key`, and `--profile` fail explicitly.
+
 ## 4. Restart and accept
 
 Restart DSH and start an ordinary main conversation. Confirm `tabbit_brain` is visible. In a staged preset, complete its normal `phase_begin`; do not call `phase_advance` to fake completion.

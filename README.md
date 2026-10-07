@@ -55,6 +55,10 @@ Tools install in ordinary main-agent own scopes, independent of preset. An ordin
 
 Set `apiKeyEnv` to the name of the environment variable holding the gateway key. Do not put the key in source or docs. `brainPrompt` is shipped in the package; no companion DSH preset is required. Gateway auto-start is lazy unless warmup is enabled. A detached gateway can outlive DSH.
 
+## Read-only setup checker
+
+BrainService posts directly to `gatewayUrl` using the environment variable named by `apiKeyEnv`. It needs no DSH provider, dedicated preset, or DSH model-directory registration. `node scripts/setup.mjs --help` lists the checker options. Default runs are offline; `--check-gateway` explicitly checks `/v1/models` and optionally verifies `--models`. `--api-key-env` selects the key variable without printing its value. `--dry-run` prints the plan without connecting; `--yes` supports automation. The checker never starts a gateway or reads or writes settings, presets, or credentials.
+
 ## Limits and verification
 
 - Cookie acquisition belongs to the gateway. A normal running Tabbit without CDP causes acquisition to skip; valid old cookies remain usable. See SETUP for explicit recovery.
