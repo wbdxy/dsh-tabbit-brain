@@ -28,12 +28,12 @@ node gateway-patch/install.mjs --dry-run
 node gateway-patch/install.mjs --api-key <你自己定的key> --base-url https://web.tabbit.com
 ```
 
-### 必须你自己填的
+### 可选参数与默认值
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| ★ `--base-url <url>` | Tabbit 后端地址。**国内版 `https://web.tabbit.com`，国际版 `https://web.tabbit.ai`** | 国内版 |
-| ★ `--api-key <key>` | 网关鉴权 key。自己定，**DSH 那侧的 `TABBIT_API_KEY` 必须与它一致** | `sk-tabbit-local` |
+| `--base-url <url>` | Tabbit 后端地址。**国内版 `https://web.tabbit.com`，国际版 `https://web.tabbit.ai`** | 国内版 |
+| `--api-key <key>` | 网关鉴权 key。自行设置；Brain 插件侧的 `TABBIT_API_KEY` 必须与它一致 | `sk-tabbit-local` |
 | `--dir <path>` | 装到哪 | `~/.tabbit-gateway/tabbit-toy` |
 | `--port <n>` | 监听端口 | `8787` |
 
