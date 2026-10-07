@@ -9,6 +9,12 @@ The main AI calls a local Tabbit gateway through `tabbit_brain`. The plugin owns
 Install and prerequisites: [SETUP.md](SETUP.md).
 Gateway protocol: [REVERSE-PROXY.md](REVERSE-PROXY.md).
 
+## An external thinking partner
+
+The injected guidance explains why and when the main agent should consult Brain: independent code review, candidate causes and counterexamples, design trade-offs, difficult derivations, writing drafts and completion review. Independent analysis can run alongside evidence gathering. The main agent supplies a bounded brief, collects results, verifies findings and remains responsible for delivery; delegation does not guarantee better accuracy or faster completion.
+
+`standard` encourages useful independent reasoning without waiting for the user to name the tool. `aggressive` uses the same capabilities and verification rules with a lower threshold for smaller tasks; `off` disables the injected guidance. Simple facts and short edits can remain local. A user-named model is passed through `model`; otherwise the configured `agentModel` is used. No model specialty is assumed from its name.
+
 ## Tools and conversations
 
 - `tabbit_brain` requires `description` and `prompt`; `conversation`, `model`, and `run_in_background` are optional. Background is default. Omit `model` to use the configured `agentModel`, or pass any model id exposed by the configured gateway for a one-request override. Check `/v1/models` to discover the gateway's current ids. The harness `jobId` and `brainJobId` are separate identifiers: collect/cancel the harness job with `job_output`/`job_kill`, and inspect the Brain job with `tabbit_brain_status`.

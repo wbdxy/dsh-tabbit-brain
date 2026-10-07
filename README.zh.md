@@ -9,6 +9,12 @@
 安装与前置条件: [SETUP.zh.md](SETUP.zh.md).
 反代协议: [REVERSE-PROXY.zh.md](REVERSE-PROXY.zh.md).
 
+## 外部思考伙伴
+
+注入指引说明主代理为什么、何时应调用 Brain：独立代码审查、候选原因与反例、设计取舍、复杂推导、写作初稿和完成前复核。独立分析可与证据收集并行。主代理提供边界明确的简报、收集结果、核验发现并负责最终交付；委派不保证准确率更高或完成更快。
+
+`standard` 鼓励有价值的独立分析，无需等待用户点名工具。`aggressive` 沿用同一能力说明和验证规则，降低较小任务的调用门槛；`off` 关闭注入指引。简单事实与短小修改可由主代理直接完成。用户点名模型时通过 `model` 传入，否则使用配置中的 `agentModel`，不根据模型名称假定专长。
+
 ## 工具与会话
 
 - `tabbit_brain` 的 `description` 和 `prompt` 必填；`conversation`、`model` 和 `run_in_background` 可选，默认后台执行。省略 `model` 时使用配置中的 `agentModel`；也可以传入当前网关通过 `/v1/models` 暴露的任意模型 id，仅覆盖本次请求。Harness 的 `jobId` 与 `brainJobId` 是不同标识：用 `job_output`/`job_kill` 收集或取消 Harness 作业，用 `tabbit_brain_status` 查看 Brain 作业。
