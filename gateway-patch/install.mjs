@@ -85,7 +85,7 @@ TABBIT_BRAIN_SESSION_MAP_PATH 默认指向网关 state/brain-session-map.json。
 这两项可手动写入 .env；配置优先读取 .env 的非空值，其次 shell 环境变量。
 
 做完之后仍需你手动做:
-  - 在 DSH 的 settings.yaml 里注册 provider（见 SETUP.md）
+  - 按 SETUP.md 配置 TABBIT_API_KEY、agentModel，并重启 DSH
   - 确保 Tabbit 已登录（cookie 要从那里读）
 `);
 }
@@ -231,7 +231,7 @@ log('      日志里看到 [ephemeral] 就成功了。');
 log('');
 log('    如果日志说「cookie 里没有 token」→ 你的 Tabbit 没登录，先打开它登录一次。');
 log('');
-log('    然后回到 SETUP.md 步骤 3，在 DSH 里注册 provider。');
+log('    然后回到 SETUP.md 步骤 3，配置 TABBIT_API_KEY 和 agentModel，并重启 DSH。');
 log('');
 
 if (DRY) log('  [DRY-RUN 结束] 去掉 --dry-run 才会真正写入。\n');

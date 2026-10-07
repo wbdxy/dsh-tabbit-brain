@@ -21,7 +21,7 @@ This file records successive acceptance phases. Earlier failures and pending ite
 - Service fixture covers queued/completed/failed status, stored result and cross-owner denial.
 - Store and tool-adapter fixtures pass. These fixes were written after the latest host restart, so they are not yet verified in the running host.
 
-## Pending; not claimed complete
+## Historical pending checkpoint (superseded by later acceptance below)
 
 - Reload/restart and collect one real background job using DSH jobId; query status using brainJobId.
 - Exercise same-conversation follow-up and independent-conversation history.
@@ -34,7 +34,7 @@ This file records successive acceptance phases. Earlier failures and pending ite
 
 No overall completion claim, tag or remote push is authorized by this progress record.
 
-## Latest host acceptance failure
+## Superseded host acceptance failure (resolved by later acceptance below)
 
 - Background Brain job persistence and `job_output` now work after restart.
 - A persisted conversation read showed assistant/user ordering that is not deterministic when messages share a millisecond timestamp. Fixed with per-conversation `messages.seq`, migration of existing rows ordered by old timestamp/id, and seq-based reads.
